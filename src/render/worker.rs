@@ -17,7 +17,7 @@ pub struct RenderJobId(pub u64);
 pub struct RenderResult {
     /// Original submitted job.
     pub job: RenderJobId,
-    /// Packed premultiplied RGBA raster from the shared GPU adapter.
+    /// Packed straight-alpha RGBA raster from the shared GPU adapter.
     pub bytes: Vec<u8>,
     /// Raster width.
     pub width: u32,

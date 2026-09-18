@@ -1,12 +1,14 @@
-//! Offline configuration entry point; native serving is not yet implemented.
+//! Configuration checks and explicit protected native serving.
+mod serve;
 use std::io::Read;
 
 fn run() -> Result<(), String> {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     match arguments.as_slice() {
         [arg] if arg == "--help" || arg == "-h" => println!(
-            "Usage: provlita check --config PATH\n       provlita --version\nNative serving is not implemented yet."
+            "Usage: provlita check --config PATH\n       provlita --serve\n       provlita --version\nServing requires explicit Sophia protocol and GPU grants."
         ),
+        [arg] if arg == "--serve" => serve::run()?,
         [arg] if arg == "--version" => println!("provlita {}", env!("CARGO_PKG_VERSION")),
         [command, option, path] if command == "check" && option == "--config" => {
             let file = std::fs::File::open(path).map_err(|e| format!("open configuration: {e}"))?;
@@ -24,9 +26,7 @@ fn run() -> Result<(), String> {
             );
         }
         _ => {
-            return Err(
-                "use provlita check --config PATH; native serving is not implemented yet".into(),
-            );
+            return Err("use provlita check --config PATH or the protected --serve entry".into());
         }
     }
     Ok(())

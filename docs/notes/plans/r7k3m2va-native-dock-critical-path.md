@@ -291,3 +291,30 @@ allocation, bounded upload, permits, catalog candidate lifecycle and atomic
 Presented-authorized callback responses. Then come the three-client workload,
 frozen physical wrapper and attended run. `--serve` and `lom-test dock` are still
 not ready; t003/t004 and physical acceptance remain open.
+
+### Revision-8 client scheduler (2026-09-18)
+
+The `--serve` entry now joins the real GPU worker and retained Xilem roots to
+the generic shell-client FIFO. The scheduler owns two resource slots per output,
+subject to negotiated aggregate limits, with lazy IDs and exact Released-driven
+generation reuse. Upload service shares a four-chunk turn budget. Only exact
+Presented targets reach callbacks; ACK plus catalog activation enqueue atomically,
+and retries do not run the callback again. Topology replacement currently refuses
+the connection for supervisor recovery rather than reusing old allocations.
+
+Private-socket controls execute the production scheduler with supplied raster
+bytes and Prepared/Presented outcomes. They prove two-output progress, wire BGRA
+conversion, replay refusal, idle suppression, and one output's generation reuse
+while the other holds an old resource. They do not execute Session policy,
+application launch, the GPU worker or native presentation. All 15 Rust tests and
+12 tooling tests, strict Clippy, formatting and layout pass device-hidden in
+Sophia `.artifacts/dock-service/independent-check.log`. The generic client's
+target-class/event-kind correction passes its own tests and strict Clippy in
+`client-check.log`; catalog target class 3 is not input Activate kind 1.
+Earlier fixture transaction/permit/Prepared errors and the failed class comparison
+remain in separate logs, not counted as passing evidence.
+
+The physical wrapper, frozen three-component build and workload remain pending.
+Catalog churn during an already-started upload, reconnect/teardown orchestration
+and actual three-client aggregate pressure still need integration controls.
+Do not treat this client checkpoint as permission or readiness to run `lom-test dock`.
