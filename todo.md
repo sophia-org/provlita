@@ -3,4 +3,4 @@
 (A) 2026-09-18 Build the retained Xilem view and bounded GPU adapter. +critical +native-dock @development id:t003 order:003 depends:t001 [details](docs/notes/plans/r7k3m2va-native-dock-critical-path.md#t003)
 (A) 2026-09-18 Integrate KDL pins, catalog identity and native dock service. +critical +native-dock @development id:t004 order:004 depends:t002,t003 [details](docs/notes/plans/r7k3m2va-native-dock-critical-path.md#t004)
 (A) 2026-09-18 Prove three-component isolation, progress and reclamation. +critical +native-dock @development id:t005 order:005 depends:t004 [details](docs/notes/plans/r7k3m2va-native-dock-critical-path.md#t005)
-(A) 2026-09-18 Accept both-monitor coexistence and measured workload. +critical +native-dock @physical id:t006 order:006 depends:t005 [details](docs/notes/plans/r7k3m2va-native-dock-critical-path.md#t006)
+(A) 2026-09-18 Run lom-test dock both-monitor smoke, then accept coexistence, restart and measured workload. +critical +native-dock @physical id:t006 order:006 depends:t005 [details](docs/notes/plans/r7k3m2va-native-dock-critical-path.md#t006)

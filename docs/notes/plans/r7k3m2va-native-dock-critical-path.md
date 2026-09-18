@@ -318,3 +318,26 @@ The physical wrapper, frozen three-component build and workload remain pending.
 Catalog churn during an already-started upload, reconnect/teardown orchestration
 and actual three-client aggregate pressure still need integration controls.
 Do not treat this client checkpoint as permission or readiness to run `lom-test dock`.
+
+### Attended three-component smoke launcher (2026-09-18)
+
+Sophia now implements `lom-test dock`: clean signed source checks, bounded
+three-role profile generation, unchanged WM shortcuts, exact binary/config hashes,
+the existing protected Lom GPU preflight, 90-second session and recovery checks.
+Lom and Provlita have separate top/bottom edge allowances; Bemenu has no GPU grant
+or persistent reservation. Session now passes the dock's own 64-pixel allowance
+to the protected launch. The selected test catalog supplies Terminal; absent
+Browser/Files pins remain visibly unavailable rather than launching commands.
+
+The host transcript reader requires independent current grants, both outputs,
+successful Session-adopted launches from menu and dock on each output, and clean
+component accounting. The four intended terminal launches are attended; no
+launcher test performs them. Supplied build/VT/session tests exercise the actual
+launcher and real profile/verifier while retaining that distinction.
+
+Sophia `.artifacts/dock-smoke` contains scoped Session/config/diagnostic tests,
+three-role retained-consumer progress and strict Clippy evidence. Both release
+builds succeed with hardware hidden. Canonical validation is separately required
+for the final signed Sophia checkpoint. These controls do not complete t005 or
+t006: native placement/focus, component restart and measured workloads remain
+open. See Sophia `tools/probes/dock/README.md` for the exact attended smoke.
