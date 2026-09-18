@@ -217,3 +217,39 @@ and service wiring, enabled revision-8 negotiation, Provlita's retained
 Xilem/GPU protocol service, then the three-client wrapper and frozen contained
 gates. Only after those pass is `lom-test dock` ready for an attended run.
 No task is closed and no hardware, installation or publication is claimed.
+
+### Session catalog-service join (2026-09-18)
+
+Sophia `74a8f7d3` enables exact revision-8 persistent negotiation and a borrowed
+Dock service, preserving separate bar/menu/dock grants. It carries the catalog
+binding through presentation and authorizes the complete issued action against
+current target continuity before inserting an immutable catalog origin into the
+existing launch queue. ACK remains independent; response retry cannot relaunch.
+
+Device-hidden controls pass: 483 Session library, nine connection-owner, five
+process and 88 runtime/transport tests, with 20 ignored across Session suites;
+strict Session Clippy and layout pass. Exact-echo and event-replay mutants fail.
+The three-peer fixture uses real negotiation without a supervisor; action
+fixtures supply protection and presented facts and do not execute applications.
+Evidence: Sophia `.artifacts/dock-action-service`. This is not native acceptance.
+
+Provlita's GPU service, per-output lifecycle/scheduler and the frozen three-client
+wrapper remain outstanding. The retained Xilem application flow is unchanged.
+
+### Shared GPU adapter (2026-09-18)
+
+Lom now houses `crates/shell-gpu`: the existing exact-device admission, retained
+render fd, Vello renderer and bounded readback owner, independent of both apps'
+views and protocol state. Provlita's `DockRenderer` passes the retained host's
+scene to this same owner. It is not yet invoked by a native service. The sibling
+path dependency is explicit development source; the physical gate must freeze
+both identities, and distribution still requires a reproducible source pin.
+
+Both complete project checks pass device-hidden in Sophia's
+`.artifacts/dock-shared-gpu/indexed-check.log`, including strict Clippy, layout,
+dependency checks and the moved admission/deadline controls. The first archive
+attempt lacked Git metadata required by the audit and is not a passing gate.
+Compile checks initially used the wrong Scene import; the corrected adapter uses
+the same `imaging::record::Scene` as Masonry. No GPU was opened or enumerated.
+This establishes compile/API reuse and headless regressions, not hardware
+compatibility or Provlita's pending worker/protocol/presentation integration.

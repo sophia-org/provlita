@@ -29,8 +29,12 @@ identity; never reconstruct the widget tree for every rendered frame.
 Start from Lom's pinned Xilem commit b81d8d7a631849def6eeab282561439b963862e5,
 using xilem_masonry for the documented non-Winit embedding, Masonry and
 masonry_imaging with Vello, wgpu 28/Vulkan and exact DRM-device selection.
-The retained Xilem/Masonry host now uses that exact pin. GPU integration remains
-planned; its compatible dependencies must be frozen before native rendering.
+The retained Xilem/Masonry host uses that exact pin. The scene adapter now shares
+Lom's `sophia-shell-gpu` crate, which owns exact-device selection and bounded
+readback without either app's model or protocol. Its development dependency is
+the sibling `../lom/crates/shell-gpu`; source gates must snapshot both repositories.
+An independently reproducible release pin remains required before distribution.
+Native worker/protocol integration remains unfinished.
 CPU rasterization is test-only evidence, never a production fallback.
 
 Reuse reviewed generic shell lifecycle and render-admission seams. Extract only
