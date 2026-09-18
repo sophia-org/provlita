@@ -18,15 +18,20 @@ trash services and file-manager integration are outside the first milestone.
 Model state consists of stable pin IDs, authorized catalog identities/revisions,
 output/allocation identities, layout, and exact outstanding actions. Use typed
 events and deterministic updates; keep I/O and rendering in explicit adapters.
-Use Xilem's intended reactive reconciliation rather than an additional competing
-UI framework. Retain one bounded Masonry host per grant/output/allocation/scale
+Use Xilem's own application update and reactive reconciliation flow. Do not add
+a parallel TEA/Elm dispatcher, reducer loop or second application-state owner.
+Xilem callbacks update the authoritative view state; protocol, timer and GPU
+adapters deliver observations and execute bounded effects outside view construction.
+Those adapters retain their actual resource owners independently of widget state.
+Retain one bounded Masonry host per grant/output/allocation/scale
 identity; never reconstruct the widget tree for every rendered frame.
 
 Start from Lom's pinned Xilem commit b81d8d7a631849def6eeab282561439b963862e5,
 using xilem_masonry for the documented non-Winit embedding, Masonry and
-masonry_imaging with Vello, wgpu 28/Vulkan and exact DRM-device selection. These
-are planned dependencies, deliberately not fetched by this scaffold. Freeze an
-explicit compatible set when rendering is introduced; do not silently track main.
+masonry_imaging with Vello, wgpu 28/Vulkan and exact DRM-device selection.
+The retained Xilem/Masonry host now uses that exact pin. GPU integration remains
+planned; its compatible dependencies must be frozen before native rendering.
+CPU rasterization is test-only evidence, never a production fallback.
 
 Reuse reviewed generic shell lifecycle and render-admission seams. Extract only
 cohesive shared pieces from Lom when both clients exercise the same owner and

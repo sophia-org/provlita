@@ -4,6 +4,8 @@ Read ARCHITECTURE.md and docs/style-guide.md before editing implementation.
 
 - Xilem owns view reconciliation; deterministic model state and effect adapters
   have separate owners. Preserve real resource custody through completion.
+- Use Xilem's own application update flow, without a second TEA/Elm loop.
+  Keep protocol, timer and GPU effects in bounded adapters outside view building.
 - Keep test bodies outside src; do not widen production visibility for tests.
 - Review source cohesion at 800 lines; production over 1,000 lines fails.
 - Run sh tools/check.sh for source/tooling changes. Keep warnings at zero.

@@ -143,3 +143,24 @@ transient execution tests use private sockets and short-lived test processes;
 the new wrong-role control refuses before spawn. Earlier compile and lint
 failures remain in separate artifact directories. No hardware or native session
 was run and no Sophia implementation commit was pushed.
+
+### Retained Xilem host (2026-09-18)
+
+The dock now uses the pinned non-Winit Xilem/Masonry embedding. Xilem callbacks
+update its application state directly; there is no additional TEA dispatcher.
+Catalog observations reconcile the retained widget tree. Stable configured IDs
+resolve to current slots; unavailable entries produce no intent. One bounded
+pending intent keeps its original catalog generation and slot across updates.
+This intent is not a Sophia Action or launch authorization.
+
+The device-hidden project gate passes, including two real Xilem controls for
+widget identity, changed pixels, exact tile bounds, atomic catalog refusal and
+callback origin. CPU rasterization is test-only. The supplied ButtonPress control
+exercises Xilem message dispatch, not physical pointer input or shell authority.
+Hit rectangles use transformed border boxes, not descendant paint bounds.
+The earlier layout failures and final passing bounds-check.log are retained in
+Sophia's .artifacts/provlita-xilem-host directory.
+
+GPU rendering, native protocol dispatch, exact presented-action authorization,
+three-component coexistence and attended acceptance remain open. The host alone
+does not make lom-test dock ready. Tasks t001 through t006 remain open.
