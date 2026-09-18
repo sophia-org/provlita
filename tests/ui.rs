@@ -24,6 +24,38 @@ fn pixels(host: &mut DockHost) -> Vec<u8> {
         .unwrap()
         .data
 }
+
+#[test]
+fn first_frame_contains_distinct_vector_artwork_and_opaque_tiles() {
+    let mut host = DockHost::new(&config(), 1).unwrap();
+    let width = config().logical_size().0 as usize;
+    let first = pixels(&mut host);
+    let mut crops = Vec::new();
+    for index in 0..3 {
+        let mut colors = std::collections::BTreeSet::new();
+        let mut crop = Vec::new();
+        // Exclude the caption and border: plain text and background alone
+        // cannot satisfy the vector-artwork control.
+        for y in 12..34 {
+            for x in (18 + index * 54)..(46 + index * 54) {
+                let pixel = &first[(y * width + x) * 4..(y * width + x + 1) * 4];
+                assert_eq!(pixel[3], 255, "tile interior must be opaque");
+                colors.insert(pixel.to_vec());
+                crop.extend_from_slice(pixel);
+            }
+        }
+        assert!(colors.len() >= 3, "icon must contain actual artwork");
+        crops.push(crop);
+    }
+    assert_ne!(crops[0], crops[1]);
+    assert_ne!(crops[1], crops[2]);
+    assert_ne!(crops[0], crops[2]);
+    assert_eq!(first, pixels(&mut host), "idle redraw preserves the scene");
+    assert!(
+        host.take_intent().is_none(),
+        "layout messages cannot launch"
+    );
+}
 #[test]
 fn catalog_reconciles_real_pixels_without_replacing_widgets() {
     let mut host = DockHost::new(&config(), 1).unwrap();

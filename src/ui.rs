@@ -5,10 +5,11 @@ use masonry::{layout::AsUnit, peniko::Color};
 use xilem_masonry::{
     AnyWidgetView, WidgetView,
     style::Style as _,
-    view::{button, flex_row, label},
+    view::{button, canvas, flex_col, flex_row, label},
 };
 
 mod host;
+mod icons;
 pub use host::{DockHost, DockScene};
 
 /// Semantic tile data supplied by the catalog adapter, without command strings.
@@ -119,13 +120,14 @@ pub fn dock_view(state: &DockState) -> impl WidgetView<DockState> + use<> {
             let identity = tile.identity.clone();
             let generation = state.catalog_generation;
             let slot = tile.slot;
-            let glyph = match tile.icon.as_str() {
-                "terminal" => ">_",
-                "browser" => "◎",
-                _ => "▤",
-            };
-            let text = label(format!("{glyph}\n{}", tile.label))
-                .text_size(11.0)
+            let icon = tile.icon.clone();
+            let picture = canvas(move |_state: &mut DockState, _ctx, scene, size| {
+                icons::draw(scene, size, &icon, slot.is_some());
+            })
+            .alt_text(tile.label.clone())
+            .dims((30.px(), 28.px()));
+            let text = label(tile.label.clone())
+                .text_size(9.0)
                 .line_break_mode(masonry::properties::LineBreaking::Clip)
                 .width(f64::from(state.tile_size.saturating_sub(2)).px())
                 .color(if slot.is_some() {
@@ -134,27 +136,38 @@ pub fn dock_view(state: &DockState) -> impl WidgetView<DockState> + use<> {
                     Color::from_rgb8(115, 115, 115)
                 });
             Box::new(
-                button(text, move |state: &mut DockState| {
-                    if state.intent.is_none()
-                        && state.catalog_generation == generation
-                        && state
-                            .tiles
-                            .iter()
-                            .any(|tile| tile.identity == identity && tile.slot == slot)
-                        && let Some(slot) = slot
-                    {
-                        state.intent = Some(TileIntent {
-                            identity: identity.clone(),
-                            catalog_generation: generation,
-                            slot,
-                        });
-                    }
-                })
-                .width(f64::from(state.tile_size).px())
-                .height(f64::from(state.tile_size).px())
+                button(
+                    flex_col((picture, text)).gap(0.px()),
+                    move |state: &mut DockState| {
+                        if state.intent.is_none()
+                            && state.catalog_generation == generation
+                            && state
+                                .tiles
+                                .iter()
+                                .any(|tile| tile.identity == identity && tile.slot == slot)
+                            && let Some(slot) = slot
+                        {
+                            state.intent = Some(TileIntent {
+                                identity: identity.clone(),
+                                catalog_generation: generation,
+                                slot,
+                            });
+                        }
+                    },
+                )
+                .dims((
+                    f64::from(state.tile_size).px(),
+                    f64::from(state.tile_size).px(),
+                ))
                 .padding(0.px())
                 .corner_radius(0.px())
-                .border_width(1.px()),
+                .border_width(1.px())
+                .border_color(Color::from_rgb8(174, 180, 189))
+                .background_color(if slot.is_some() {
+                    Color::from_rgb8(55, 62, 73)
+                } else {
+                    Color::from_rgb8(41, 44, 49)
+                }),
             ) as Box<AnyWidgetView<DockState>>
         })
         .collect();

@@ -6,6 +6,21 @@ tags: [critical-path, gpu, shell]
 ---
 # Native dock critical path
 
+## First attended repair, 2026-09-18
+
+The `20260918T153807Z` run showed the dock but its text-symbol prototype was
+not the intended tile appearance. Original vector terminal/globe/folder drawings
+now use the retained Xilem canvas path with explicit opaque square backgrounds,
+small captions, dim unavailable entries and unchanged exact layout targets.
+No second TEA loop, CPU fallback, host icon access or protocol extension is used.
+
+Sophia separately repairs missing X11 LookupColor (the actual xterm exit) and
+retained native-owner polling during VT release. Its investigation is
+`docs/notes/investigations/d7k4q2vm-dock-smoke-exposes-color-lookup-and-seat-retirement-order.md`.
+The strengthened smoke requires successful terminal exits, not just process
+creation. Type `exit` in each terminal; keep VT handoff separate from the
+automatic-exit run. t005/t006 remain open pending native acceptance.
+
 Scope: pinned-application GPU dock alongside Lom and Bemenu. Scaffold creation
 is complete; implementation and acceptance below remain open. Coordinate file
 ownership before cross-repository edits; do not import isolated input work.

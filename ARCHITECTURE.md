@@ -1,6 +1,6 @@
 # Provlita architecture
 
-Status: accepted direction, implementation pending. First target: a small,
+Status: implemented development path, native acceptance pending. First target: a small,
 independent GPU dock beside Lom and Bemenu on generic Linux distributions.
 No custom kernel changes. Sophia remains rendering-library agnostic.
 
@@ -94,6 +94,10 @@ KDL selects pins by stable catalog identity, output selection and appearance.
 No arbitrary command strings. Unknown catalog entries are visibly unavailable.
 Use bounded bundled original icons/vector tiles initially; no recursive host
 icon-theme discovery, broad home access or unbounded image decoding. The example
+icons are now original path drawings in retained Xilem canvases, recorded directly
+for Vello. Layout notifications reconcile through Xilem; they cannot create a
+catalog activation. Opaque square tiles preserve transparent surrounding space.
+The example
 KDL is parsed and tested. Pin names use `registered:<name>` or
 `desktop:<desktop-file-id>`. The retained view adapter resolves complete catalogs
 and preserves the exact catalog/allocation identity through callbacks. The native

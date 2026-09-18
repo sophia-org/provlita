@@ -2,13 +2,14 @@
 use super::{DockState, dock_view};
 use crate::config::Config;
 use masonry::{
-    app::{RenderRoot, RenderRootOptions, WindowSizePolicy},
+    app::{RenderRoot, RenderRootOptions, RenderRootSignal, WindowSizePolicy},
     core::{DefaultProperties, WidgetId, WidgetRef},
     imaging::record::{Scene, replay_transformed},
     kurbo::Affine,
     peniko::Blob,
 };
 use std::sync::Arc;
+use std::{cell::RefCell, rc::Rc};
 use xilem_masonry::{
     MasonryRoot, ViewCtx,
     core::{
@@ -49,6 +50,7 @@ pub struct DockHost {
     width: u32,
     height: u32,
     scale: f64,
+    canvas_updates: Rc<RefCell<Vec<(WidgetId, masonry::kurbo::Size)>>>,
 }
 impl DockHost {
     /// Construct a bounded retained host without display or system font access.
@@ -77,9 +79,27 @@ impl DockHost {
         let mut state = DockState::new(config);
         let view = MasonryRoot::new(dock_view(&state));
         let (element, view_state) = view.build(&mut context, &mut state);
+        let canvas_updates = Rc::new(RefCell::new(
+            Vec::<(WidgetId, masonry::kurbo::Size)>::with_capacity(16),
+        ));
+        let updates = canvas_updates.clone();
         let root = RenderRoot::new(
             element.0.new_widget,
-            |_| {},
+            move |signal| {
+                // Layout notifications request Xilem reconciliation, never a
+                // launch. User actions still require exact protocol authority.
+                if let RenderRootSignal::Action(action, id) = signal
+                    && let Some(change) =
+                        action.downcast_ref::<masonry::widgets::CanvasSizeChanged>()
+                {
+                    let mut updates = updates.borrow_mut();
+                    if let Some(entry) = updates.iter_mut().find(|entry| entry.0 == id) {
+                        entry.1 = change.size;
+                    } else if updates.len() < 16 {
+                        updates.push((id, change.size));
+                    }
+                }
+            },
             RenderRootOptions {
                 default_properties: Arc::new(DefaultProperties::new()),
                 use_system_fonts: false,
@@ -100,6 +120,7 @@ impl DockHost {
             width,
             height,
             scale,
+            canvas_updates,
         })
     }
     /// Current Xilem application state, without mutable toolkit access.
@@ -158,6 +179,20 @@ impl DockHost {
     }
     /// Produce a scene from this tree; no rasterizer or GPU is invoked here.
     pub fn scene(&mut self) -> DockScene {
+        // Only the bounded layout notifications enter Xilem here. A toolkit
+        // ButtonPress is never synthesized from an untrusted drawing signal.
+        let _ = self.root.redraw();
+        let updates = self
+            .canvas_updates
+            .borrow_mut()
+            .drain(..)
+            .collect::<Vec<_>>();
+        for (id, size) in updates {
+            self.dispatch_widget_action(
+                id,
+                DynMessage(Box::new(masonry::widgets::CanvasSizeChanged { size })),
+            );
+        }
         let (layers, _) = self.root.redraw();
         let mut logical = Scene::new();
         layers.replay_into(&mut logical);
