@@ -184,3 +184,14 @@ evidence only (`.artifacts/dock-candidate-binding`), not enabled dock transport.
 The next integration is revision-8 socket service, exact presented action
 authorization and outcome custody. GPU service and the physical wrapper remain
 after that; no task is closed by these foundations.
+
+Sophia candidate storage is signed at `68d9da00`; response custody is signed at
+`f5d7913e`. Typed activation intake reserves aggregate control credit, retains the
+first exact outcome across refusal and transfers it once to the partial-write
+FIFO. Seventeen device-hidden runtime controls and the combined 477 Session
+controls pass, with 15 Session tests ignored. A compiled credit-omission mutant
+fails. These response fixtures supply negotiated state and simulate FIFO drain;
+the complete dock handshake/action/launch chain remains open. Post-mutation
+positive checks use a fresh dedicated target after one shared-target retry reused
+the mutant binary; that retry is explicitly non-evidence. See Sophia's
+`.artifacts/dock-catalog-response`. No native run, deployment or push occurred.
