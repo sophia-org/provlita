@@ -195,3 +195,25 @@ the complete dock handshake/action/launch chain remains open. Post-mutation
 positive checks use a fresh dedicated target after one shared-target retry reused
 the mutant binary; that retry is explicitly non-evidence. See Sophia's
 `.artifacts/dock-catalog-response`. No native run, deployment or push occurred.
+
+### Candidate transport, allocation and independent dock layer (2026-09-18)
+
+Sophia `7081add5` connects revision-8 candidate records to the actual candidate
+store and response FIFO, with bounded visits, exact grant/catalog checks and
+refusal before dequeue. `0f2165e0` permits only role-1 edge allocations for the
+persistent profile. `89bf2df3` adds the distinct Session-selected Dock layer
+between Shell and Launcher; dock replacement/removal preserves both neighbors.
+
+Device-hidden evidence: 20 runtime library controls, 11 ordinary allocation,
+10 transient and seven persistent candidate controls pass; 154 backend library
+controls pass. Strict affected Clippy and layout pass. Compiled wrong-grant and
+dock-as-bar-slot mutations fail their intended controls. These are retained
+ownership/FIFO and simulated-completion tests, not three negotiated processes or
+physical acceptance. Artifacts are Sophia's `dock-candidate-transport`,
+`dock-edge-allocation` and `dock-three-layers` directories under `.artifacts`.
+
+The remaining order is Session's exact presented catalog-action authorization
+and service wiring, enabled revision-8 negotiation, Provlita's retained
+Xilem/GPU protocol service, then the three-client wrapper and frozen contained
+gates. Only after those pass is `lom-test dock` ready for an attended run.
+No task is closed and no hardware, installation or publication is claimed.
