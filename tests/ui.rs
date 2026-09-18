@@ -56,6 +56,26 @@ fn first_frame_contains_distinct_vector_artwork_and_opaque_tiles() {
         "layout messages cannot launch"
     );
 }
+
+#[test]
+fn vector_tiles_preserve_configured_extent_at_both_size_limits() {
+    for size in [16, 32, 48, 128] {
+        let mut config = config();
+        config.tile_size = size;
+        let mut host = DockHost::new(&config, 1).unwrap();
+        let raster = pixels(&mut host);
+        let (width, height) = config.logical_size();
+        assert_eq!(raster.len(), (width * height * 4) as usize);
+        for (_, rect) in host.tile_layout() {
+            assert_eq!(rect.width(), f64::from(size));
+            assert_eq!(rect.height(), f64::from(size));
+        }
+        assert!(
+            raster[..width as usize * 4].iter().all(|byte| *byte == 0),
+            "artwork must not overflow into transparent top padding"
+        );
+    }
+}
 #[test]
 fn catalog_reconciles_real_pixels_without_replacing_widgets() {
     let mut host = DockHost::new(&config(), 1).unwrap();

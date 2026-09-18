@@ -120,14 +120,15 @@ pub fn dock_view(state: &DockState) -> impl WidgetView<DockState> + use<> {
             let identity = tile.identity.clone();
             let generation = state.catalog_generation;
             let slot = tile.slot;
+            let icon_scale = f64::from(state.tile_size) / 48.0;
             let icon = tile.icon.clone();
             let picture = canvas(move |_state: &mut DockState, _ctx, scene, size| {
                 icons::draw(scene, size, &icon, slot.is_some());
             })
             .alt_text(tile.label.clone())
-            .dims((30.px(), 28.px()));
+            .dims(((30.0 * icon_scale).px(), (28.0 * icon_scale).px()));
             let text = label(tile.label.clone())
-                .text_size(9.0)
+                .text_size((9.0 * icon_scale) as f32)
                 .line_break_mode(masonry::properties::LineBreaking::Clip)
                 .width(f64::from(state.tile_size.saturating_sub(2)).px())
                 .color(if slot.is_some() {
