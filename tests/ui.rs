@@ -74,3 +74,36 @@ fn xilem_callback_updates_state_directly_and_preserves_captured_catalog() {
     assert_eq!(current.slot, 4);
     assert!(host.take_intent().is_none());
 }
+
+#[test]
+fn full_width_allocation_centers_the_same_fractional_scale_tree_and_targets() {
+    let mut host = DockHost::with_scale(&config(), 1.5).unwrap();
+    host.install_catalog(1, &entries()).unwrap();
+    let (mut scene, targets) = host.allocated_scene(1200, 96).unwrap();
+    let widgets = host.tile_layout();
+    assert_eq!(targets.len(), 3);
+    let center = f64::from((1200 - (config().logical_size().0 as f64 * 1.5).ceil() as u32) / 2);
+    for (index, (id, rect)) in targets.iter().enumerate() {
+        assert_eq!(*id, widgets[index].0);
+        assert_eq!(rect.x0, center + widgets[index].1.x0 * 1.5);
+        assert_eq!(rect.width(), 72.0);
+    }
+    let mut raster = VelloCpuRenderer::new(1200, 96);
+    let pixels = raster
+        .render_source(&mut scene.scene, 1200, 96)
+        .unwrap()
+        .data;
+    assert_eq!(
+        &pixels[..4],
+        &[0, 0, 0, 0],
+        "outside dock remains transparent"
+    );
+    assert!(pixels.iter().any(|byte| *byte != 0));
+    assert!(host.allocated_scene(20, 96).is_err());
+    assert_eq!(
+        host.tile_layout(),
+        widgets,
+        "refusal does not replace widgets"
+    );
+    assert!(DockHost::with_scale(&config(), f64::NAN).is_err());
+}

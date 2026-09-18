@@ -53,12 +53,20 @@ pub struct DockHost {
 impl DockHost {
     /// Construct a bounded retained host without display or system font access.
     pub fn new(config: &Config, scale: u32) -> Result<Self, String> {
-        if !(1..=4).contains(&scale) || config.pins.is_empty() || config.pins.len() > 16 {
+        Self::with_scale(config, f64::from(scale))
+    }
+    /// Construct at an explicitly negotiated fractional scale.
+    pub fn with_scale(config: &Config, scale: f64) -> Result<Self, String> {
+        if !scale.is_finite()
+            || !(1.0..=4.0).contains(&scale)
+            || config.pins.is_empty()
+            || config.pins.len() > 16
+        {
             return Err("invalid dock extent or scale".into());
         }
         let (width, height) = config.logical_size();
-        let width = width.checked_mul(scale).ok_or("dock width overflow")?;
-        let height = height.checked_mul(scale).ok_or("dock height overflow")?;
+        let width = (f64::from(width) * scale).ceil() as u32;
+        let height = (f64::from(height) * scale).ceil() as u32;
         if width > 8192 || height > 1024 || u64::from(width) * u64::from(height) > 8 * 1024 * 1024 {
             return Err("dock raster exceeds local budget".into());
         }
@@ -77,7 +85,7 @@ impl DockHost {
                 use_system_fonts: false,
                 size_policy: WindowSizePolicy::User,
                 size: (width, height).into(),
-                scale_factor: f64::from(scale),
+                scale_factor: scale,
                 test_font: Some(Blob::new(Arc::new(
                     include_bytes!("../../assets/fonts/DejaVuSansMono.ttf").to_vec(),
                 ))),
@@ -91,7 +99,7 @@ impl DockHost {
             root,
             width,
             height,
-            scale: f64::from(scale),
+            scale,
         })
     }
     /// Current Xilem application state, without mutable toolkit access.
@@ -160,6 +168,42 @@ impl DockHost {
             width: self.width,
             height: self.height,
         }
+    }
+    /// Place the retained dock in a transparent full-width edge allocation.
+    /// Returns physical tile rectangles from the same layout and transform.
+    /// Padding remains transparent and supplies no input target.
+    pub fn allocated_scene(
+        &mut self,
+        width: u32,
+        height: u32,
+    ) -> Result<(DockScene, Vec<(WidgetId, masonry::kurbo::Rect)>), String> {
+        if width < self.width
+            || height < self.height
+            || width > 8192
+            || height > 1024
+            || u64::from(width) * u64::from(height) > 8 * 1024 * 1024
+        {
+            return Err("allocation cannot contain the bounded dock raster".into());
+        }
+        let local = self.scene();
+        let x = f64::from((width - self.width) / 2);
+        let y = f64::from(height - self.height);
+        let mut scene = Scene::new();
+        replay_transformed(&local.scene, &mut scene, Affine::translate((x, y)));
+        let transform = Affine::translate((x, y)) * Affine::scale(self.scale);
+        let targets = self
+            .tile_layout()
+            .into_iter()
+            .map(|(widget, rect)| (widget, transform.transform_rect_bbox(rect)))
+            .collect();
+        Ok((
+            DockScene {
+                scene,
+                width,
+                height,
+            },
+            targets,
+        ))
     }
     /// Tile widget identities and layout bounds from the same retained tree.
     /// Native target identities must be assigned separately by the content owner.

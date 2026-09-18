@@ -34,7 +34,12 @@ Lom's `sophia-shell-gpu` crate, which owns exact-device selection and bounded
 readback without either app's model or protocol. Its development dependency is
 the sibling `../lom/crates/shell-gpu`; source gates must snapshot both repositories.
 An independently reproducible release pin remains required before distribution.
-Native worker/protocol integration remains unfinished.
+The capacity-one GPU executor is implemented, but native service integration
+remains unfinished. Xilem roots stay on the protocol thread so callbacks can
+progress during GPU readback; only immutable recorded scenes move to the worker.
+The returned raster carries its exact service job identity. Worker timeouts
+poison reuse, and failed rasterizers stay owned until explicit shutdown. Joining
+a finished worker proves thread exit, not Sophia credit reclamation or KMS cleanup.
 CPU rasterization is test-only evidence, never a production fallback.
 
 Reuse reviewed generic shell lifecycle and render-admission seams. Extract only
@@ -90,7 +95,9 @@ No arbitrary command strings. Unknown catalog entries are visibly unavailable.
 Use bounded bundled original icons/vector tiles initially; no recursive host
 icon-theme discovery, broad home access or unbounded image decoding. The example
 KDL is parsed and tested. Pin names use `registered:<name>` or
-`desktop:<desktop-file-id>`; catalog resolution and native serving remain pending.
+`desktop:<desktop-file-id>`. The retained view adapter resolves complete catalogs
+and preserves the exact catalog/allocation identity through callbacks. Native
+serving and its authoritative Presented/Action join remain pending.
 
 ## Validation and acceptance
 

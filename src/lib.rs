@@ -2,3 +2,4 @@
 pub mod config;
 pub mod render;
 pub mod ui;
+pub mod views;

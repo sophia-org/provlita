@@ -253,3 +253,41 @@ Compile checks initially used the wrong Scene import; the corrected adapter uses
 the same `imaging::record::Scene` as Masonry. No GPU was opened or enumerated.
 This establishes compile/API reuse and headless regressions, not hardware
 compatibility or Provlita's pending worker/protocol/presentation integration.
+
+### Responsive GPU executor and exact retained views (2026-09-18)
+
+The GPU executor now accepts one owned recorded scene, returns its exact job ID,
+and polls startup/completion with a two-second failure guard. A refused submission
+returns the same boxed source. Timeouts poison reuse; failed rasterizers remain
+owned until explicit shutdown. Shutdown polls a real thread join and does not
+claim server resource reclamation or GPU completion merely from thread exit.
+
+Xilem roots stay on the protocol thread. The real callback control dispatches
+and obtains a tile intent while the worker's simulated render remains held.
+There is no second TEA reducer. The view adapter retains at most sixteen exact
+grant/output/allocation/scale roots; replacing one preserves its neighbor.
+Catalog replacement rejects callbacks from older rendered metadata. Unavailable
+pins have no input target. Fractional-scale scenes and targets share the same
+centering transform in a transparent full-width bottom-edge allocation.
+
+All 13 Rust tests and 12 tooling tests pass in the device-hidden complete project
+gate, including strict Clippy, formatting and layout:
+Sophia `.artifacts/dock-worker/final-check.log`. The worker controls use real
+threads with supplied admission evidence and raster results; view controls use
+actual Xilem/Masonry and CPU rasterization. Neither opens/enumerates a GPU.
+A separately compiled mutation removing only the catalog revision guard fails
+the old-callback assertion in `stale-view-mutant.log`; it uses the earlier view
+snapshot with byte-identical view logic, before the separate failed-worker
+retention follow-up. The positive tree/target was not mutated.
+
+Earlier logs retain a large-error Clippy failure and an archive captured before
+staging completed; neither counts as final evidence. The final snapshot contains
+the staged source and passes the actual project gate. Development protocol
+dependencies now use the sibling Sophia source at `d53c0258`; the gate freezes
+that source beside Lom `2b79103`. No source publication is implied by local paths.
+
+Next is the actual per-output protocol/resource scheduler: negotiated limits,
+allocation, bounded upload, permits, catalog candidate lifecycle and atomic
+Presented-authorized callback responses. Then come the three-client workload,
+frozen physical wrapper and attended run. `--serve` and `lom-test dock` are still
+not ready; t003/t004 and physical acceptance remain open.

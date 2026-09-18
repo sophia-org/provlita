@@ -2,6 +2,8 @@
 //! Construction is explicit; ordinary configuration and view tests never call it.
 use crate::ui::DockScene;
 pub use sophia_shell_gpu::{GpuAdmissionEvidence, GpuGrant};
+mod worker;
+pub use worker::{GpuWorker, RenderJobId, RenderResult};
 
 /// Sequential GPU rasterizer. A protocol worker must own this object and its
 /// retained hosts; this adapter does not create a second application loop.
