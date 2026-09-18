@@ -164,3 +164,23 @@ Sophia's .artifacts/provlita-xilem-host directory.
 GPU rendering, native protocol dispatch, exact presented-action authorization,
 three-component coexistence and attended acceptance remain open. The host alone
 does not make lom-test dock ready. Tasks t001 through t006 remain open.
+
+### Independent catalog owners and persistent storage (2026-09-18)
+
+Sophia `607d0b1b` keeps publications per exact connected grant and routes the
+single catalog worker through its actual pending/dispatch owner. The two-peer
+control uses real sockets and a real `/bin/true` child; catalog/presentation
+authority remains supplied. Final device-hidden Session checks pass 477 tests,
+15 ignored, strict Clippy and layout. A compiled wrong-owner guard mutant fails.
+The first two archive runs tested the baseline by mistake; they are explicitly
+excluded from candidate evidence. Corrected evidence is in Sophia's
+`.artifacts/dock-catalog-owners-v3`.
+
+Persistent candidate storage subsequently carries the catalog generation through
+actual assembly and resource-bearing renderer bundles, with revalidation before
+render transfer. Six new controls plus 32 existing candidate controls pass, and
+a compiled generation-check mutant fails. This is supplied completion/store
+evidence only (`.artifacts/dock-candidate-binding`), not enabled dock transport.
+The next integration is revision-8 socket service, exact presented action
+authorization and outcome custody. GPU service and the physical wrapper remain
+after that; no task is closed by these foundations.
