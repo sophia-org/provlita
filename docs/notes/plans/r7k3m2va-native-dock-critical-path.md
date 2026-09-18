@@ -77,3 +77,69 @@ Freeze signed clean sources, binaries, profile and rollback. Predeclare workload
 
 [Architecture](../../../ARCHITECTURE.md), [decision](../decisions/b8n2q5wc-native-gpu-dock.md),
 [task queue](../../../todo.md). Task state lives only in the queue.
+
+## Implementation checkpoint: inventory, wire and configuration (2026-09-18)
+
+The next Sophia slice implements the bounded three-role inventory, seals role
+registration before connection reservations begin, and partitions the existing
+64 MiB cap as bar 24 MiB, launcher 20 MiB and dock 20 MiB. Explicit reservations
+bind a component to a distinct edge and logical thickness; allocation scales it
+once. The current profile applies these edges to all outputs, conservatively
+refusing shared-edge configurations. Retained bar bands are keyed by connection
+owner rather than selected from the first bar. This is not yet three-client
+native service: Dock startup and negotiation remain explicitly refused until
+its persistent service is implemented.
+
+Revision-8 codec work adds persistent catalog candidate/activation records and
+stable registered/desktop identities. The legacy catalog encoding is unchanged;
+the new complete transaction requires a bijection between slots and identities.
+Missing, duplicated, stale or cross-transaction identity records refuse. No
+transient opening or workspace-indicator action is fabricated for a dock.
+
+Device-hidden evidence in Sophia's `.artifacts/provlita-admission-capacity`:
+`checkpoint-gates` runs 789 Rust controls with zero failures, 20 ignored, strict
+affected Clippy and no warning lines; `catalog-independent` checks five golden
+records and 1,644 mutations against the independent C reader. The identity
+publication controls use actual Session catalog construction and encoders,
+not process launch, native presentation or a negotiated revision-8 service.
+Source-layout checking also passes. These are scoped gates, not canonical or
+native acceptance. Earlier setup/compile failures remain separately retained.
+
+Provlita now implements bounded KDL parsing and `check --config PATH`.
+The example resolves syntactically to a 172 by 64 logical-pixel three-pin strip;
+no catalog authorization is implied by parsing it. Device-hidden project checks
+pass four Rust controls, twelve tooling controls, formatting, layout and strict
+Clippy (`.artifacts/provlita-config-check/stable-identities` in Sophia).
+
+Open critical path remains: per-connection catalog publication/execution,
+reserved once-only persistent action outcomes, complete candidate/input binding,
+role negotiation and service construction, retained GPU view and scheduling,
+three-client lifecycle workload, `lom-test dock`, then attended acceptance.
+None of t001–t006 is closed by this checkpoint. No hardware, installation,
+live endpoint access or pending Sophia implementation publication occurred.
+
+### Shared execution owner (2026-09-18)
+
+Sophia's signed local checkpoint `00dea343` carries an explicit transient or
+persistent cause through the existing bounded launch queue, worker verification,
+execution attempt and child attribution. Persistent requests do not fabricate a
+menu opening or keyboard lease. Exact entry/command ownership, grant revocation
+and once-only execution per admission use the same production queue as Bemenu.
+Replay after an admission has retired still requires the forthcoming presented
+action ledger; queue de-duplication alone is not that authorization boundary.
+
+The execution boundary additionally requires the connection's actual role
+capability and profile. A real transient connection with the same grant cannot
+execute a persistent cause. Persistent negotiation remains refused, so this
+checkpoint enables no dock process or launch path yet.
+
+Device-hidden final checks: 498 passing Rust controls, zero failures, 15 ignored;
+strict affected Clippy and layout pass. Evidence is
+`.artifacts/persistent-catalog-queue-v4` in Sophia. The three persistent queue
+controls supply authorized events and prove queue custody, exact command/grant,
+duplicate dispatch, peer-specific revocation and capacity refusal. They do not
+prove presentation authorization or a revision-8 socket roundtrip. Existing
+transient execution tests use private sockets and short-lived test processes;
+the new wrong-role control refuses before spawn. Earlier compile and lint
+failures remain in separate artifact directories. No hardware or native session
+was run and no Sophia implementation commit was pushed.

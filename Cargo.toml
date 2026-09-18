@@ -10,3 +10,6 @@ publish = false
 
 [lints.rust]
 missing_docs = "warn"
+
+[dependencies]
+kdl = { version = "=6.7.1", default-features = false, features = ["span"] }

@@ -3,8 +3,9 @@
 A small native Sophia GPU dock, inspired by Gershwin's square application tiles.
 Provlita means pier or quay in Greek.
 
-**Status: scaffold only.** No dock, GPU renderer, configuration parser or native
-session is implemented yet. The current binary only reports project information.
+**Status: bounded configuration parser implemented; native dock pending.**
+`provlita check --config examples/minimal/config.kdl` validates the configuration
+without resolving the catalog, rendering or contacting a session.
 The intended stack is Xilem/Masonry + Vello through Sophia's shell IPC; no GTK,
 X11, Wayland endpoint or private display server.
 
@@ -16,7 +17,7 @@ tracking, previews, drag-and-drop and auto-hide are deferred.
 - [Critical path](todo.md) and [task details](docs/notes/plans/r7k3m2va-native-dock-critical-path.md)
 - [Style guide](docs/style-guide.md) and [work tracking](docs/work-tracking.md)
 - [Notes](docs/notes/README.md)
-- [Proposed KDL](examples/minimal/config.kdl) (design example, not yet accepted by a parser)
+- [Proposed KDL](examples/minimal/config.kdl) (tested configuration syntax)
 
 ## Development
 
@@ -25,7 +26,7 @@ Use a disk-backed Cargo target directory. No extra GUI packages are needed yet.
 
 ```sh
 sh tools/check.sh
-cargo run -- --help
+cargo run -- check --config examples/minimal/config.kdl
 ```
 
 The current gate runs only device-free tooling and scaffold tests. Future GPU

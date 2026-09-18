@@ -80,7 +80,8 @@ KDL selects pins by stable catalog identity, output selection and appearance.
 No arbitrary command strings. Unknown catalog entries are visibly unavailable.
 Use bounded bundled original icons/vector tiles initially; no recursive host
 icon-theme discovery, broad home access or unbounded image decoding. The example
-KDL is proposed syntax until parser/schema controls land.
+KDL is parsed and tested. Pin names use `registered:<name>` or
+`desktop:<desktop-file-id>`; catalog resolution and native serving remain pending.
 
 ## Validation and acceptance
 

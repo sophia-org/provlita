@@ -1,4 +1,4 @@
-// Proposed syntax only; the scaffold does not parse this file.
+// Accepted configuration syntax; catalog resolution and native serving remain pending.
 schema 1
 dock {
     outputs "all"
@@ -6,8 +6,8 @@ dock {
     align "center"
     tile-size 48
     spacing 6
-    pin "terminal" label="Terminal" icon="terminal"
-    pin "browser" label="Browser" icon="browser"
-    pin "files" label="Files" icon="files"
+    pin "registered:terminal" label="Terminal" icon="terminal"
+    pin "registered:browser" label="Browser" icon="browser"
+    pin "registered:files" label="Files" icon="files"
 }
 // Pins must resolve through the authorized catalog; these IDs are illustrative.
