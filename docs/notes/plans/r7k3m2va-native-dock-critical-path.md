@@ -16,6 +16,33 @@ Define bounded third-component admission, budgets and per-output reservations.
 
 Coordinate Session/runtime ownership. Replace the current two-role/two-active-epoch assumptions with bounded inventories. Define per-component budget reservations under aggregate caps, no authority inheritance, exact restart identities and bar/dock edge-conflict rules. Exit: valid three-client admission and budget/reservation/neighbor negatives through production owners.
 
+### Admission-owner foundation (2026-09-18)
+
+Sophia checkpoint `9f1da60e` (local, unpublished) adds this foundation.
+Six real-socket transport controls and fourteen runtime library controls pass;
+strict focused Clippy and source layout pass. Removing aggregate reservation
+checking makes the held-consumer control fail; restored controls pass. No full
+canonical or hardware run is claimed. Evidence is retained in Sophia under
+`.artifacts/provlita-admission-capacity`.
+
+The shared Sophia content registry now has an explicit bounded active-owner
+capacity (one through three); existing construction still defaults to two.
+Capacity does not increase the 64 MiB aggregate reservation ceiling or authorize
+any role. No configuration or live Session caller enables the third owner yet.
+
+A device-hidden private-socket control admits three actual transports with
+24/20/20 MiB reservations, retains a disconnected peer's real pixel lease,
+refuses replacement while those bytes remain charged, and lets both neighbors
+upload. Dropping the exact retained consumer permits a fresh epoch; final
+collection reaches quiescence. This is storage/transport evidence, not GPU,
+process-supervision, edge reservation or native dock acceptance.
+
+Remaining t001 work: role-specific capability derivation, fixed inventory across
+Session/process scheduling, explicit production budget partition, and exact
+per-output bar/dock reservation conflict and retirement handling. Persistent
+catalog launch remains t002. Do not configure Provlita as a bar to bypass these
+requirements. The project binary remains a scaffold.
+
 ## t002
 
 Implement generic persistent presented catalog actions.
