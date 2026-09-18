@@ -1,0 +1,7 @@
+/target/
+/.artifacts/
+/.zk/notebook.db*
+/.zk/index.db*
+/.todo/report.txt
+__pycache__/
+*.py[cod]
