@@ -1842,10 +1842,12 @@ checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
 [[package]]
 name = "sophia-protocol"
 version = "0.1.0"
+source = "git+https://github.com/sophia-org/sophia?rev=bc23ee5bedce9dfc1c2a69003661b7d6386c0dcc#bc23ee5bedce9dfc1c2a69003661b7d6386c0dcc"
 
 [[package]]
 name = "sophia-shell-client"
 version = "0.1.0"
+source = "git+https://github.com/sophia-org/sophia?rev=bc23ee5bedce9dfc1c2a69003661b7d6386c0dcc#bc23ee5bedce9dfc1c2a69003661b7d6386c0dcc"
 dependencies = [
  "sophia-protocol",
 ]
@@ -1853,6 +1855,7 @@ dependencies = [
 [[package]]
 name = "sophia-shell-gpu"
 version = "0.1.0"
+source = "git+https://github.com/sophia-org/lom?rev=ad349869a8ce3f9eff77c6b91465b80cb54198b6#ad349869a8ce3f9eff77c6b91465b80cb54198b6"
 dependencies = [
  "ash",
  "imaging",

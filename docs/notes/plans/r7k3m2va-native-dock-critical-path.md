@@ -301,6 +301,12 @@ the staged source and passes the actual project gate. Development protocol
 dependencies now use the sibling Sophia source at `d53c0258`; the gate freezes
 that source beside Lom `2b79103`. No source publication is implied by local paths.
 
+On 2026-09-26 the missing `../sophia-stack` path dependencies were replaced by
+git pins, as Lom does: Sophia `bc23ee5b` (signed, on `master`) and Lom
+`ad349869`, whose `shell-gpu` is unchanged since `2b79103`. The earlier
+`d53c0258` builds but fails both dock service tests, because the service work
+landed against `bc23ee5b`.
+
 Next is the actual per-output protocol/resource scheduler: negotiated limits,
 allocation, bounded upload, permits, catalog candidate lifecycle and atomic
 Presented-authorized callback responses. Then come the three-client workload,
