@@ -12,8 +12,8 @@ publish = false
 missing_docs = "warn"
 
 [dependencies]
-sophia-shell-protocol = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "f4e8d1fdc777174eb27fa57bb78888e3c3c11c80" }
-sophia-shell-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "f4e8d1fdc777174eb27fa57bb78888e3c3c11c80" }
+sophia-shell-protocol = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "c1323401b7e336606408499b13097d1270a2319d" }
+sophia-shell-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "c1323401b7e336606408499b13097d1270a2319d" }
 sophia-shell-gpu = { git = "https://github.com/sophia-org/lom", rev = "ad349869a8ce3f9eff77c6b91465b80cb54198b6" }
 kdl = { version = "=6.7.1", default-features = false, features = ["span"] }
 xilem_masonry = { git = "https://github.com/linebender/xilem", rev = "b81d8d7a631849def6eeab282561439b963862e5", default-features = false }

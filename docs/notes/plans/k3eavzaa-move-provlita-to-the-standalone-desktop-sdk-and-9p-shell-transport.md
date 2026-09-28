@@ -113,3 +113,19 @@ as namespace init, and a control showing a handler-less namespace init ignores
 the same SIGTERM. `tests/service.rs` raises SIGTERM in-process with a launch
 outcome held by the fixture, then checks the report, the disconnect and that no
 activation is replayed.
+
+## Negotiated upload chunks (2026-09-28)
+
+The SDK pin is now `c1323401b7e336606408499b13097d1270a2319d`. Resource
+descriptions can cross the file wire under reduced chunk limits; the content
+owner still checks their exact granted layout. Provlita uses the canonical
+`max_chunk_bytes` rule, with scripted-peer tests at row boundaries. Its Lom
+GPU-library pin is unchanged.
+
+The full offline `tools/check.sh` passed 26 Rust tests, tooling tests, layout,
+formatting and strict clippy. Earlier mutation controls are recorded in
+`ipc-removal-inventory/t268-rust-consumers.md`; the final pin gate is
+`ipc-retirement/t268-provlita-c132340-check.log`. The private Cargo cache
+was explicitly seeded from the published SDK's local source. The gate had no
+network, display or devices. Production-export and native acceptance remain
+separate; no installed component changed.
