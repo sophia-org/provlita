@@ -73,6 +73,8 @@ pub struct Peer {
     pub refuse: Option<ShellFileKind>,
     /// The candidate byte budget carried by each pacing permit.
     pub permit_bytes: u32,
+    /// The pixel width every granted allocation gets.
+    pub width: u32,
 }
 fn object_header(kind: ShellFileKind) -> ShellFileHeader {
     ShellFileHeader {
@@ -96,9 +98,14 @@ fn peer(wire: Wire) -> Peer {
         begins: 0,
         refuse: None,
         permit_bytes: 8192,
+        width: 800,
     }
 }
 pub fn pair() -> (DockService<Raster>, Peer) {
+    pair_with_width(800)
+}
+/// Both outputs and every allocation are `width` pixels wide.
+pub fn pair_with_width(width: u32) -> (DockService<Raster>, Peer) {
     let path = std::env::temp_dir().join(format!(
         "dock-service-{}-{}",
         std::process::id(),
@@ -145,6 +152,7 @@ pub fn pair() -> (DockService<Raster>, Peer) {
     .unwrap();
     connected.store(true, Ordering::Release);
     let mut peer = server.join().unwrap();
+    peer.width = width;
     std::fs::remove_file(path).unwrap();
     peer.send(
         TransactionId::from_raw(900),
@@ -154,7 +162,7 @@ pub fn pair() -> (DockService<Raster>, Peer) {
             outputs: (1..=2)
                 .map(|id| ContentOutputFactsEntry {
                     output: output(id),
-                    local_width: 800,
+                    local_width: width,
                     local_height: 600,
                     scale_numerator: 1,
                     scale_denominator: 1,
@@ -171,6 +179,13 @@ pub fn pair() -> (DockService<Raster>, Peer) {
     )
 }
 impl Peer {
+    /// Every ResourceBegin the dock declared, as the SDK decoded it.
+    pub fn declared_begins(&self) -> Vec<ContentResourceBegin> {
+        self.resources
+            .values()
+            .map(|(begin, _)| begin.clone())
+            .collect()
+    }
     /// Publish one server record: output facts as the `outputs` object, the
     /// rest as ordered events.
     pub fn send(&mut self, transaction: TransactionId, record: ShellContentRecord) {
@@ -478,13 +493,13 @@ impl Peer {
                         logical: ContentLogicalRect {
                             x: 0,
                             y: 536,
-                            width: 800,
+                            width: self.width,
                             height: 64,
                         },
                         pixel: ContentPixelRect {
                             x: 0,
                             y: 536,
-                            width: 800,
+                            width: self.width,
                             height: 64,
                         },
                         scale_numerator: 1,

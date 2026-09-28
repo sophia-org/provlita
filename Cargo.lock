@@ -1843,7 +1843,7 @@ checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
 [[package]]
 name = "sophia-9p-client"
 version = "0.1.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=ea9cf651d37649fc1be889b3cfef6c1729b055f8#ea9cf651d37649fc1be889b3cfef6c1729b055f8"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=f4e8d1fdc777174eb27fa57bb78888e3c3c11c80#f4e8d1fdc777174eb27fa57bb78888e3c3c11c80"
 dependencies = [
  "rustix",
  "sophia-9p-records",
@@ -1852,17 +1852,17 @@ dependencies = [
 [[package]]
 name = "sophia-9p-records"
 version = "0.1.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=ea9cf651d37649fc1be889b3cfef6c1729b055f8#ea9cf651d37649fc1be889b3cfef6c1729b055f8"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=f4e8d1fdc777174eb27fa57bb78888e3c3c11c80#f4e8d1fdc777174eb27fa57bb78888e3c3c11c80"
 
 [[package]]
 name = "sophia-desktop-ids"
 version = "0.1.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=ea9cf651d37649fc1be889b3cfef6c1729b055f8#ea9cf651d37649fc1be889b3cfef6c1729b055f8"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=f4e8d1fdc777174eb27fa57bb78888e3c3c11c80#f4e8d1fdc777174eb27fa57bb78888e3c3c11c80"
 
 [[package]]
 name = "sophia-shell-client"
 version = "0.1.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=ea9cf651d37649fc1be889b3cfef6c1729b055f8#ea9cf651d37649fc1be889b3cfef6c1729b055f8"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=f4e8d1fdc777174eb27fa57bb78888e3c3c11c80#f4e8d1fdc777174eb27fa57bb78888e3c3c11c80"
 dependencies = [
  "rustix",
  "sophia-9p-client",
@@ -1886,7 +1886,7 @@ dependencies = [
 [[package]]
 name = "sophia-shell-protocol"
 version = "0.1.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=ea9cf651d37649fc1be889b3cfef6c1729b055f8#ea9cf651d37649fc1be889b3cfef6c1729b055f8"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=f4e8d1fdc777174eb27fa57bb78888e3c3c11c80#f4e8d1fdc777174eb27fa57bb78888e3c3c11c80"
 dependencies = [
  "sophia-desktop-ids",
 ]

@@ -64,12 +64,9 @@ impl<R: RasterExecutor> DockService<R> {
         }
         let limits = self.limits.as_ref().expect("limits");
         let row = result.width as usize * 4;
-        let usable = limits
-            .max_frame_payload
-            .checked_sub(48)
-            .ok_or("frame prefix exceeds payload")?
-            .min(limits.max_chunk_bytes) as usize;
-        let chunk_bytes = usable / row * row;
+        // Whole rows within the file wire's canonical upload chunk; the SDK
+        // validated these Limits when the grant arrived.
+        let chunk_bytes = limits.max_chunk_bytes as usize / row * row;
         if chunk_bytes == 0 {
             return Err("negotiated chunk cannot hold a row".into());
         }

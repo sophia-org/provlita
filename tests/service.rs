@@ -154,3 +154,34 @@ fn sigterm_closes_the_connection_and_reports_an_unresolved_launch_without_replay
     // The one activation Session received is the only one: nothing replayed.
     assert_eq!(peer.actions.len(), 1);
 }
+
+/// Upload chunks are `max_chunk_bytes` of whole rows (t268): at widths where
+/// whole rows exactly fill the chunk and one past, every upload declares the
+/// canonical count, which the peer's SDK decoder checks independently. The
+/// file wire's grant is the prototype, whose frame cap is exactly chunk + 48,
+/// so the old frame-derived chunk was the same value; this pins the count,
+/// not a difference.
+#[test]
+fn uploads_declare_the_canonical_chunk_count_at_row_boundaries() {
+    let chunk = ContentLimits::prototype(grant()).max_chunk_bytes;
+    assert_eq!(chunk, 65488);
+    for (width, rows) in [(800, 20), (4093, 4), (4094, 3), (8186, 2), (8187, 1)] {
+        assert_eq!(chunk / (width * 4), rows, "fixture arithmetic");
+        let (mut service, mut peer) = pair_with_width(width);
+        drive(&mut service, &mut peer, |p| p.presented.len() == 2);
+        let begins = peer.declared_begins();
+        assert_eq!(begins.len(), 2, "one upload per output");
+        for begin in begins {
+            assert_eq!(begin.width_px, width);
+            let expected = begin.height_px.div_ceil(rows);
+            assert_eq!(begin.chunk_count, expected, "width {width}");
+            let layout = begin
+                .layout(&ContentLimits::prototype(begin.grant))
+                .unwrap();
+            assert_eq!(
+                (layout.rows_per_chunk, layout.chunk_count),
+                (rows, expected)
+            );
+        }
+    }
+}
