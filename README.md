@@ -6,8 +6,9 @@ Provlita means pier or quay in Greek.
 **Status: bounded configuration parser implemented; native dock pending.**
 `provlita check --config examples/minimal/config.kdl` validates the configuration
 without resolving the catalog, rendering or contacting a session.
-The intended stack is Xilem/Masonry + Vello through Sophia's shell IPC; no GTK,
-X11, Wayland endpoint or private display server.
+The intended stack is Xilem/Masonry + Vello through Sophia's 9P shell file
+contract, using the standalone Rust desktop SDK; no GTK, X11, Wayland endpoint
+or private display server.
 
 The first milestone is pinned application tiles on both monitors alongside Lom
 and Bemenu, with exact launch authorization and independent cleanup. Running-app

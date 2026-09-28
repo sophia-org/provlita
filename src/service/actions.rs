@@ -60,19 +60,17 @@ impl<R: RasterExecutor> DockService<R> {
                 index += 1;
                 continue;
             }
-            match self.connection.enqueue_catalog_action_response(
+            let (transaction, ack, activation) = (
                 reply.transaction,
-                &reply.ack,
-                reply
-                    .activation
-                    .as_ref()
-                    .map(|value| (reply.transaction, value)),
-            ) {
+                reply.ack.clone(),
+                reply.activation.clone(),
+            );
+            match self.enqueue_action_response(transaction, &ack, activation.as_ref()) {
                 Ok(()) => {}
                 Err(ShellClientError::QueueSaturated) => break,
                 Err(e) => return Err(e.to_string()),
             }
-            if reply.activation.is_some() {
+            if activation.is_some() {
                 self.replies[index].sent = true;
                 index += 1;
             } else {

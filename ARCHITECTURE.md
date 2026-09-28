@@ -55,7 +55,7 @@ the bounded read-only sysfs discovery contract. No PCI/CPU fallback, ambient
 DISPLAY, Wayland endpoint, private display server or broad host sysfs access.
 
 Vello renders to an offscreen GPU target. The existing supported path performs
-bounded readback followed by content upload over shell IPC: it is GPU-rendered,
+bounded readback followed by content upload over the 9P shell file contract: it is GPU-rendered,
 not zero-copy. Treat upload and actual native presentation as separate facts.
 Use bounded GPU jobs/readback waits and per-output dirty scheduling. Unchanged
 outputs do not submit. Keep pending presentation, input binding and resource
@@ -102,7 +102,8 @@ KDL is parsed and tested. Pin names use `registered:<name>` or
 `desktop:<desktop-file-id>`. The retained view adapter resolves complete catalogs
 and preserves the exact catalog/allocation identity through callbacks. The native
 service joins callbacks to the generic client's exact Presented/Action lifecycle.
-Private-socket tests supply presentation outcomes; they do not prove native serving.
+Scripted 9P file-contract tests supply presentation outcomes; they do not prove
+native serving.
 
 ## Validation and acceptance
 

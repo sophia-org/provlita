@@ -1,23 +1,38 @@
-//! Private socket fixture. It supplies allocation/pacing/native outcomes; it
-//! does not run Session, a GPU, WM execution or application processes.
+//! Private 9P file-contract fixture. Only 9P bytes cross the socket; it
+//! supplies allocation/pacing/native outcomes and does not run Session, a GPU,
+//! WM execution or application processes.
+use super::files_wire::{EPOCH, Submission, Wire};
 use provlita::{
     config::Config,
     render::{RenderJobId, RenderResult},
     service::{DockService, RasterExecutor},
     ui::DockScene,
 };
-use sophia_protocol::*;
 use sophia_shell_client::{ShellClientOptions, ShellConnection};
+use sophia_shell_protocol::{shell_files::*, *};
 use std::{
-    collections::BTreeMap,
-    io::{Read, Write},
-    os::unix::net::{UnixListener, UnixStream},
+    collections::{BTreeMap, HashMap},
+    os::unix::net::UnixListener,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+// Sophia@bc23ee5b crates/sophia-protocol/src/packets/shell_launcher.rs. The
+// standalone shell SDK requires this bit in the dock mask but does not export
+// its name.
+const SOPHIA_SHELL_CAPABILITY_APPLICATION_CATALOG: u64 = 1 << 5;
+const CAPABILITIES: u64 = SOPHIA_SHELL_CAPABILITY_PERSISTENT_CATALOG
+    | SOPHIA_SHELL_CAPABILITY_APPLICATION_CATALOG
+    | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
+    | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
+    | SOPHIA_SHELL_CAPABILITY_WORK_AREA_RESERVATION;
+
 pub fn grant() -> ContentGrant {
     ContentGrant {
-        connection_epoch: 1,
+        connection_epoch: EPOCH,
         content_grant_epoch: 2,
     }
 }
@@ -43,34 +58,42 @@ impl RasterExecutor for Raster {
     }
 }
 pub struct Peer {
-    stream: UnixStream,
-    input: Vec<u8>,
+    wire: Wire,
+    slots: HashMap<u64, String>,
     resources: BTreeMap<(u64, u64), (ContentResourceBegin, Vec<u8>)>,
-    candidates: BTreeMap<
-        u64,
-        (
-            TransactionId,
-            CatalogCandidateBegin,
-            Option<ContentCandidateChunk>,
-        ),
-    >,
     pub presented: BTreeMap<u64, (u64, CatalogCandidateBegin, ContentCandidateChunk)>,
     pub actions: Vec<CatalogActivation>,
     pub acks: Vec<ContentActionAck>,
     pub releases: Vec<(TransactionId, ContentResourceId)>,
     pub hold_releases: bool,
     pub begins: usize,
+    /// Refuse every submission of this kind with EACCES and no custody.
+    pub refuse: Option<ShellFileKind>,
+    /// The candidate byte budget carried by each pacing permit.
+    pub permit_bytes: u32,
 }
-fn frame(stream: &mut UnixStream) -> Vec<u8> {
-    let mut header = [0; SOPHIA_IPC_HEADER_LEN];
-    stream.read_exact(&mut header).unwrap();
-    let len = u32::from_le_bytes(header[16..20].try_into().unwrap()) as usize;
-    let mut bytes = header.to_vec();
-    bytes.resize(bytes.len() + len, 0);
-    stream
-        .read_exact(&mut bytes[SOPHIA_IPC_HEADER_LEN..])
-        .unwrap();
-    bytes
+fn object_header(kind: ShellFileKind) -> ShellFileHeader {
+    ShellFileHeader {
+        kind,
+        connection_epoch: EPOCH,
+        submission_id: 0,
+        sequence: 0,
+    }
+}
+fn peer(wire: Wire) -> Peer {
+    Peer {
+        wire,
+        slots: HashMap::new(),
+        resources: BTreeMap::new(),
+        presented: BTreeMap::new(),
+        actions: Vec::new(),
+        acks: Vec::new(),
+        releases: Vec::new(),
+        hold_releases: false,
+        begins: 0,
+        refuse: None,
+        permit_bytes: 8192,
+    }
 }
 pub fn pair() -> (DockService<Raster>, Peer) {
     let path = std::env::temp_dir().join(format!(
@@ -82,61 +105,44 @@ pub fn pair() -> (DockService<Raster>, Peer) {
             .as_nanos()
     ));
     let listener = UnixListener::bind(&path).unwrap();
+    let connected = Arc::new(AtomicBool::new(false));
+    let done = connected.clone();
+    // The SDK negotiates synchronously, so the peer runs on its own thread
+    // until the connection exists, then returns to the single-threaded drive.
     let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
-        let hello = decode_shell_v1_client_hello_frame(&frame(&mut stream)).unwrap();
-        assert_eq!(hello.minimum_revision, 8);
-        stream
-            .write_all(
-                &encode_shell_v1_server_welcome_frame(ShellV1ServerWelcome {
-                    selected_revision: 8,
-                    connection_epoch: 1,
-                    capabilities: hello.required_capabilities,
-                    max_descriptors: 16,
-                    max_label_bytes: 128,
-                    max_pending_activations: 16,
-                })
-                .unwrap(),
+        let (stream, _) = listener.accept().unwrap();
+        let mut wire = Wire::new(stream);
+        wire.object(
+            "limits",
+            15,
+            encode_shell_file_limits(
+                object_header(ShellFileKind::Limits),
+                ContentLimits::prototype(grant()),
             )
-            .unwrap();
-        stream
+            .unwrap(),
+        );
+        let mut peer = peer(wire);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !done.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline, "negotiation did not finish");
+            peer.pump();
+            std::thread::sleep(Duration::from_micros(100));
+        }
+        peer
     });
-    let connection = ShellConnection::connect(
+    let connection = ShellConnection::connect_files(
         &path,
         ShellClientOptions {
             minimum_revision: 8,
             maximum_revision: 8,
-            required_capabilities: SOPHIA_SHELL_CAPABILITY_PERSISTENT_CATALOG
-                | SOPHIA_SHELL_CAPABILITY_APPLICATION_CATALOG
-                | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
-                | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
-                | SOPHIA_SHELL_CAPABILITY_WORK_AREA_RESERVATION,
+            required_capabilities: CAPABILITIES,
             handshake_timeout: Duration::from_secs(2),
         },
     )
     .unwrap();
-    let stream = server.join().unwrap();
+    connected.store(true, Ordering::Release);
+    let mut peer = server.join().unwrap();
     std::fs::remove_file(path).unwrap();
-    stream.set_nonblocking(true).unwrap();
-    let mut peer = Peer {
-        stream,
-        input: Vec::new(),
-        resources: BTreeMap::new(),
-        candidates: BTreeMap::new(),
-        presented: BTreeMap::new(),
-        actions: Vec::new(),
-        acks: Vec::new(),
-        releases: Vec::new(),
-        hold_releases: false,
-        begins: 0,
-    };
-    peer.send(
-        TransactionId::from_raw(0),
-        ShellContentRecord::Limits(ContentLimits::prototype(grant())),
-    );
     peer.send(
         TransactionId::from_raw(900),
         ShellContentRecord::OutputFacts(ContentOutputFacts {
@@ -162,17 +168,50 @@ pub fn pair() -> (DockService<Raster>, Peer) {
     )
 }
 impl Peer {
-    pub fn send(&mut self, tx: TransactionId, record: ShellContentRecord) {
-        self.stream
-            .write_all(&encode_shell_content_frame(tx, &record).unwrap())
+    /// Publish one server record: output facts as the `outputs` object, the
+    /// rest as ordered events.
+    pub fn send(&mut self, transaction: TransactionId, record: ShellContentRecord) {
+        if let ShellContentRecord::OutputFacts(facts) = &record {
+            let generation = facts.facts_generation;
+            let bytes = encode_shell_file_outputs(
+                object_header(ShellFileKind::Outputs),
+                &ShellFileTransactionRecord {
+                    transaction,
+                    record,
+                },
+            )
             .unwrap();
+            self.wire.object("outputs", 200 + generation, bytes);
+            self.wire
+                .announce(ShellFileKind::Outputs, generation, 200 + generation);
+            return;
+        }
+        let record = ShellFileTransactionRecord {
+            transaction,
+            record,
+        };
+        let (kind, body) = match &record.record {
+            ShellContentRecord::AllocationResult(_) => (
+                ShellFileKind::AllocationResult,
+                encode_shell_file_allocation_result_body(&record).unwrap(),
+            ),
+            ShellContentRecord::ResourceStatus(_) => (
+                ShellFileKind::ResourceStatus,
+                encode_shell_file_resource_status_body(&record).unwrap(),
+            ),
+            ShellContentRecord::ResourceReleased(_) => (
+                ShellFileKind::ResourceReleased,
+                encode_shell_file_resource_released_body(&record).unwrap(),
+            ),
+            _ => encode_shell_file_transaction_body(&record).unwrap(),
+        };
+        self.wire.event(kind, &body);
     }
+    /// Publish a whole catalog, identities included, as the `catalog` object.
     pub fn catalog(&mut self, generation: u64) {
-        let tx = TransactionId::from_raw(1000 + generation);
-        let mut frames = encode_shell_application_catalog(
-            tx,
-            &ShellApplicationCatalog {
-                connection_epoch: 1,
+        let catalog = ShellPersistentCatalog {
+            catalog: ShellApplicationCatalog {
+                connection_epoch: EPOCH,
                 generation,
                 entries: vec![ShellApplicationDescriptor {
                     slot: 1,
@@ -181,25 +220,19 @@ impl Peer {
                     keywords: String::new(),
                 }],
             },
+            identities: BTreeMap::from([(1, "registered:terminal".into())]),
+        };
+        let bytes = encode_shell_file_catalog(
+            object_header(ShellFileKind::Catalog),
+            &ShellFileCatalog {
+                transaction: TransactionId::from_raw(1000 + generation),
+                catalog,
+            },
         )
         .unwrap();
-        let end = frames.pop().unwrap();
-        frames.push(
-            encode_shell_catalog_action_frame(
-                tx,
-                &ShellCatalogActionRecord::Identity(ShellCatalogIdentity {
-                    connection_epoch: 1,
-                    catalog_generation: generation,
-                    slot: 1,
-                    identity: "registered:terminal".into(),
-                }),
-            )
-            .unwrap(),
-        );
-        frames.push(end);
-        for frame in frames {
-            self.stream.write_all(&frame).unwrap();
-        }
+        self.wire.object("catalog", 300 + generation, bytes);
+        self.wire
+            .announce(ShellFileKind::Catalog, generation, 300 + generation);
     }
     pub fn action(&mut self, id: u64, event: u64, kind: u16) -> ContentAction {
         let (epoch, begin, chunk) = &self.presented[&id];
@@ -254,79 +287,158 @@ impl Peer {
             }),
         );
     }
+    /// One bounded 9P pass, then every whole submission in order. Each is
+    /// accepted (Submitted custody) before its semantic reply.
     pub fn pump(&mut self) {
-        let mut buf = [0; 8192];
-        loop {
-            match self.stream.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => self.input.extend_from_slice(&buf[..n]),
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                Err(e) => panic!("peer read: {e}"),
+        assert!(self.wire.pump(), "dock client disconnected");
+        while let Some(submission) = self.wire.submissions.pop_front() {
+            let kind = decode_shell_file_record(&submission.bytes, ShellFileClass::Candidate)
+                .unwrap()
+                .header
+                .kind;
+            if Some(kind) == self.refuse {
+                self.wire.refuse(&submission);
+                continue;
             }
+            self.wire.accept(&submission, kind);
+            self.submission(kind, &submission);
         }
-        while self.input.len() >= SOPHIA_IPC_HEADER_LEN {
-            let len = SOPHIA_IPC_HEADER_LEN
-                + u32::from_le_bytes(self.input[16..20].try_into().unwrap()) as usize;
-            if self.input.len() < len {
-                break;
+    }
+    fn submission(&mut self, kind: ShellFileKind, submission: &Submission) {
+        let bytes = &submission.bytes;
+        let value = match kind {
+            ShellFileKind::Negotiate => {
+                let hello = decode_shell_file_negotiate(bytes).unwrap();
+                assert_eq!(
+                    (
+                        hello.minimum_revision,
+                        hello.maximum_revision,
+                        hello.required_capabilities
+                    ),
+                    (8, 8, CAPABILITIES)
+                );
+                let body = encode_shell_file_negotiated_body(ShellFileNegotiated {
+                    welcome: ShellV1ServerWelcome {
+                        selected_revision: 8,
+                        connection_epoch: EPOCH,
+                        capabilities: CAPABILITIES,
+                        max_descriptors: 16,
+                        max_label_bytes: 128,
+                        max_pending_activations: 16,
+                    },
+                    limits_published: true,
+                })
+                .unwrap();
+                self.wire.event(ShellFileKind::Negotiated, &body);
+                return;
             }
-            let bytes = self.input.drain(..len).collect::<Vec<_>>();
-            let (header, _) = decode_frame(&bytes).unwrap();
-            let tx = header.transaction;
-            match header.message_kind {
-                IpcMessageKind::ShellCatalogCandidateBegin => {
-                    let (_, ShellCatalogActionRecord::CandidateBegin(begin)) =
-                        decode_shell_catalog_action_frame(&bytes).unwrap()
-                    else {
-                        panic!()
-                    };
-                    self.candidates
-                        .insert(begin.content.candidate_generation, (tx, begin, None));
-                }
-                IpcMessageKind::ShellCatalogCandidateChunk => {
-                    let (_, ShellCatalogActionRecord::CandidateChunk(chunk)) =
-                        decode_shell_catalog_action_frame(&bytes).unwrap()
-                    else {
-                        panic!()
-                    };
-                    let generation = chunk.candidate_generation;
-                    self.candidates.get_mut(&generation).unwrap().2 = Some(chunk);
-                }
-                IpcMessageKind::ShellCatalogActivate => {
-                    let (_, ShellCatalogActionRecord::Activate(activation)) =
-                        decode_shell_catalog_action_frame(&bytes).unwrap()
-                    else {
-                        panic!()
-                    };
-                    assert!(
-                        self.acks
-                            .iter()
-                            .any(|ack| ack.event_id == activation.action.event_id
-                                && ack.disposition == 1)
-                    );
-                    self.actions.push(activation.clone());
-                    self.stream
-                        .write_all(
-                            &encode_shell_catalog_action_frame(
-                                tx,
-                                &ShellCatalogActionRecord::ActivationOutcome(
-                                    CatalogActivationOutcome {
-                                        activation,
-                                        status: 1,
-                                        reason: 0,
-                                    },
-                                ),
-                            )
-                            .unwrap(),
-                        )
-                        .unwrap();
-                }
-                _ => {
-                    let (_, record) = decode_shell_content_frame(&bytes).unwrap();
-                    self.content(tx, record);
+            ShellFileKind::AllocationRequest => {
+                decode_shell_file_allocation_request(bytes).unwrap()
+            }
+            ShellFileKind::ResourceBegin => {
+                let v = decode_shell_file_resource_begin(bytes).unwrap();
+                let ShellContentRecord::ResourceBegin(begin) = &v.record else {
+                    unreachable!()
+                };
+                let name = format!("upload/{}", v.slot);
+                self.wire.uploads.insert(name.clone(), Vec::new());
+                self.slots.insert(begin.resource.id, name);
+                ShellFileTransactionRecord {
+                    transaction: v.transaction,
+                    record: v.record,
                 }
             }
+            ShellFileKind::ResourceEnd => {
+                let v = decode_shell_file_resource_end(bytes).unwrap();
+                let ShellContentRecord::ResourceEnd(end) = &v.record else {
+                    unreachable!()
+                };
+                let slot = self.slots.remove(&end.resource.id).unwrap();
+                let data = self.wire.uploads.remove(&slot).unwrap();
+                assert!(
+                    end.total_bytes <= 137 || self.wire.short_writes > 0,
+                    "control must exercise partial slot writes"
+                );
+                // Slot bytes arrive as file writes, not chunk records.
+                self.content(
+                    v.transaction,
+                    ShellContentRecord::ResourceChunk(ContentResourceChunk {
+                        grant: end.grant,
+                        resource: end.resource,
+                        ordinal: 0,
+                        offset: 0,
+                        bytes: data,
+                    }),
+                );
+                v
+            }
+            ShellFileKind::ResourceRetire => decode_shell_file_resource_retire(bytes).unwrap(),
+            ShellFileKind::FrameDemand | ShellFileKind::ActionAck => {
+                decode_shell_file_transaction(bytes, kind).unwrap()
+            }
+            ShellFileKind::CatalogCandidate => {
+                let v = decode_shell_file_catalog_candidate(bytes).unwrap();
+                self.candidate(v.transaction, v.candidate);
+                return;
+            }
+            ShellFileKind::CatalogActivate => {
+                let v = decode_shell_file_catalog_action(bytes, kind).unwrap();
+                let ShellCatalogActionRecord::Activate(activation) = v.record else {
+                    unreachable!()
+                };
+                self.activate(v.transaction, activation);
+                return;
+            }
+            _ => panic!("unexpected transaction {kind:?}"),
+        };
+        self.content(value.transaction, value.record);
+    }
+    fn activate(&mut self, tx: TransactionId, activation: CatalogActivation) {
+        assert!(
+            self.acks
+                .iter()
+                .any(|ack| ack.event_id == activation.action.event_id && ack.disposition == 1)
+        );
+        self.actions.push(activation.clone());
+        let (kind, body) = encode_shell_file_catalog_action_body(&ShellFileCatalogActionRecord {
+            transaction: tx,
+            record: ShellCatalogActionRecord::ActivationOutcome(CatalogActivationOutcome {
+                activation,
+                status: 1,
+                reason: 0,
+            }),
+        })
+        .unwrap();
+        self.wire.event(kind, &body);
+    }
+    fn candidate(&mut self, tx: TransactionId, value: CatalogContentCandidate) {
+        let (
+            ShellCatalogActionRecord::CandidateBegin(begin),
+            ShellCatalogActionRecord::CandidateChunk(chunk),
+            ShellContentRecord::CandidateEnd(end),
+        ) = value.parts()
+        else {
+            panic!("catalog candidate parts")
+        };
+        assert_eq!(end.candidate_generation, begin.content.candidate_generation);
+        let epoch = end.candidate_generation + 100;
+        for kind in [1, 2] {
+            self.send(
+                tx,
+                ShellContentRecord::CandidateOutcome(ContentCandidateOutcome {
+                    grant: grant(),
+                    candidate_generation: end.candidate_generation,
+                    output: begin.content.output,
+                    kind,
+                    reason: 0,
+                    presentation_epoch: if kind == 2 { epoch } else { 0 },
+                    work_area_generation: 1,
+                    wm_commit_generation: 1,
+                }),
+            );
         }
+        self.presented
+            .insert(begin.content.output.id, (epoch, begin, chunk));
     }
     fn content(&mut self, tx: TransactionId, record: ShellContentRecord) {
         match record {
@@ -421,33 +533,9 @@ impl Peer {
                     state: 1,
                     reason: 0,
                     ttl_ms: 250,
-                    max_candidate_bytes: 8192,
+                    max_candidate_bytes: self.permit_bytes,
                 }),
             ),
-            ShellContentRecord::CandidateEnd(end) => {
-                let (begin_tx, begin, chunk) =
-                    self.candidates.remove(&end.candidate_generation).unwrap();
-                assert_eq!(begin_tx, tx);
-                let chunk = chunk.unwrap();
-                let epoch = end.candidate_generation + 100;
-                for kind in [1, 2] {
-                    self.send(
-                        tx,
-                        ShellContentRecord::CandidateOutcome(ContentCandidateOutcome {
-                            grant: grant(),
-                            candidate_generation: end.candidate_generation,
-                            output: begin.content.output,
-                            kind,
-                            reason: 0,
-                            presentation_epoch: if kind == 2 { epoch } else { 0 },
-                            work_area_generation: 1,
-                            wm_commit_generation: 1,
-                        }),
-                    );
-                }
-                self.presented
-                    .insert(begin.content.output.id, (epoch, begin, chunk));
-            }
             ShellContentRecord::ResourceRetire(retire) => {
                 self.releases.push((tx, retire.resource));
                 if !self.hold_releases {

@@ -1,6 +1,7 @@
 //! Bounded persistent catalog client. Xilem owns views; this owner sequences
 //! protocol effects and exact resource obligations, not a second UI reducer.
 mod actions;
+mod custody;
 mod observe;
 mod upload;
 
@@ -10,10 +11,10 @@ use crate::{
     ui::DockScene,
     views::{DockViews, ViewIdentity, ViewMetadata},
 };
-use sophia_protocol::*;
 use sophia_shell_client::{
     CatalogInbox, CatalogObservation, ContentLifecycle, ShellClientError, ShellConnection,
 };
+use sophia_shell_protocol::*;
 use std::{
     collections::VecDeque,
     time::{Duration, Instant},
@@ -21,6 +22,7 @@ use std::{
 use upload::{Pending, Phase};
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
+const IDLE_POLL: Duration = Duration::from_millis(4);
 
 /// Async raster effect boundary. Production uses the admitted GPU executor;
 /// private protocol tests may supply pixels without claiming GPU acceptance.
@@ -95,6 +97,7 @@ struct ActionReply {
 /// this object never retries an unknown launch effect in a fresh connection.
 pub struct DockService<R> {
     connection: ShellConnection,
+    custody: custody::CustodyWatch,
     inbox: CatalogInbox,
     config: Config,
     views: DockViews,
@@ -131,6 +134,7 @@ impl<R: RasterExecutor> DockService<R> {
             views: DockViews::new(config.clone()),
             config,
             connection,
+            custody: Default::default(),
             inbox,
             renderer,
             limits: None,
@@ -149,13 +153,24 @@ impl<R: RasterExecutor> DockService<R> {
             started: Instant::now(),
         })
     }
+    /// Maximum idle sleep before the next turn: the SDK's retry or readiness
+    /// deadline when one is due sooner, otherwise the bounded poll interval.
+    pub fn idle_wait(&self) -> Duration {
+        self.connection
+            .wake_deadline()
+            .map_or(IDLE_POLL, |deadline| {
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(IDLE_POLL)
+            })
+    }
     fn tx(&mut self) -> Result<TransactionId, String> {
         let id = self.next;
         self.next = id.checked_add(1).ok_or("transaction IDs exhausted")?;
         Ok(TransactionId::from_raw(id))
     }
     fn enqueue(&mut self, tx: TransactionId, record: ShellContentRecord) -> Result<bool, String> {
-        match self.connection.enqueue_content(tx, &record) {
+        match self.enqueue_content(tx, &record) {
             Ok(()) => Ok(true),
             Err(ShellClientError::QueueSaturated) => Ok(false),
             Err(e) => Err(e.to_string()),
@@ -164,7 +179,9 @@ impl<R: RasterExecutor> DockService<R> {
     /// One bounded owner turn. Its return counts actual matching Presented
     /// observations, not queue admission or GPU completion.
     pub fn step(&mut self) -> Result<usize, String> {
+        self.custody.observe(&self.connection)?;
         self.connection.poll_io().map_err(|e| e.to_string())?;
+        self.custody.observe(&self.connection)?;
         let mut presented = 0;
         for _ in 0..64 {
             let Some(observation) = self

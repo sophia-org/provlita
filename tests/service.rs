@@ -1,8 +1,11 @@
-//! Production client scheduler over private sockets with simulated native outcomes.
+//! Production client scheduler over the private 9P file contract with
+//! simulated native outcomes.
+#[path = "support/files_wire.rs"]
+mod files_wire;
 #[path = "support/service_host.rs"]
 mod host;
 use host::*;
-use sophia_protocol::*;
+use sophia_shell_protocol::*;
 
 #[test]
 fn two_outputs_present_and_exact_xilem_clicks_reply_once_without_a_gpu() {
@@ -74,4 +77,45 @@ fn withheld_old_release_keeps_actions_live_and_exact_release_enables_reuse() {
             .all(|(_, b, _)| b.catalog_generation == 3)
     });
     assert_eq!(peer.begins, 6);
+}
+
+#[test]
+fn refused_submission_is_fatal_and_never_replayed() {
+    let (mut service, mut peer) = pair();
+    peer.refuse = Some(shell_files::ShellFileKind::FrameDemand);
+    let start = std::time::Instant::now();
+    let error = loop {
+        if let Err(error) = service.step() {
+            break error;
+        }
+        peer.pump();
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(2),
+            "refusal was not observed"
+        );
+        std::thread::yield_now();
+    };
+    assert!(error.contains("refused"), "{error}");
+    assert!(peer.presented.is_empty(), "no candidate follows a refusal");
+}
+
+#[test]
+fn candidate_over_the_permit_budget_is_refused_before_submission() {
+    let (mut service, mut peer) = pair();
+    // Header fields and one surface/placement row exceed 100 bytes natively.
+    peer.permit_bytes = 100;
+    let start = std::time::Instant::now();
+    let error = loop {
+        if let Err(error) = service.step() {
+            break error;
+        }
+        peer.pump();
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(2),
+            "budget refusal was not observed"
+        );
+        std::thread::yield_now();
+    };
+    assert_eq!(error, "dock candidate exceeds negotiated byte budget");
+    assert!(peer.presented.is_empty(), "no candidate reached the peer");
 }

@@ -1,6 +1,7 @@
 //! Per-output upload, pacing and presentation obligations. One output's retained
 //! ResourceReleased never becomes a global scheduling gate.
 use super::*;
+use sophia_shell_protocol::encoding::catalog_actions::encode_catalog_content_candidate;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum Phase {
@@ -276,33 +277,28 @@ impl<R: RasterExecutor> DockService<R> {
             placement_count: 1,
             target_count: chunk.targets.len() as u32,
         };
-        // Encoded candidate bytes remain subordinate to both the immutable
-        // profile and this permit; the generic FIFO separately reserves space.
-        let wire_bytes = encode_shell_catalog_action_frame(
-            tx,
-            &ShellCatalogActionRecord::CandidateBegin(begin.clone()),
-        )
+        // The native file record carries the whole candidate as one value; it
+        // stays within both the immutable profile and this permit.
+        let candidate_bytes = encode_catalog_content_candidate(&CatalogContentCandidate {
+            candidate: ContentCandidate {
+                grant: begin.content.grant,
+                candidate_generation: candidate,
+                output: begin.content.output,
+                facts_generation: begin.content.facts_generation,
+                pacing_permit: begin.content.pacing_permit,
+                interaction_generation: begin.content.interaction_generation,
+                surfaces: chunk.surfaces.clone(),
+                placements: chunk.placements.clone(),
+                targets: chunk.targets.clone(),
+            },
+            catalog_generation: begin.catalog_generation,
+        })
         .map_err(|e| format!("{e:?}"))?
-        .len()
-            + encode_shell_catalog_action_frame(
-                tx,
-                &ShellCatalogActionRecord::CandidateChunk(chunk.clone()),
-            )
-            .map_err(|e| format!("{e:?}"))?
-            .len()
-            + encode_shell_content_frame(tx, &ShellContentRecord::CandidateEnd(end.clone()))
-                .map_err(|e| format!("{e:?}"))?
-                .len();
-        if wire_bytes > limits.max_candidate_bytes.min(permit.max_candidate_bytes) as usize {
+        .len();
+        if candidate_bytes > limits.max_candidate_bytes.min(permit.max_candidate_bytes) as usize {
             return Err("dock candidate exceeds negotiated byte budget".into());
         }
-        match self.connection.enqueue_catalog_candidate(
-            self.lifecycle.as_mut().unwrap(),
-            tx,
-            &begin,
-            &[chunk],
-            &end,
-        ) {
+        match self.enqueue_catalog_candidate(tx, &begin, chunk, &end) {
             Ok(()) => {}
             Err(ShellClientError::QueueSaturated) => return Ok(()),
             Err(e) => return Err(e.to_string()),

@@ -5,7 +5,7 @@ use crate::{
     ui::{DockHost, DockScene, TileIntent},
 };
 use masonry::{core::WidgetId, widgets::ButtonPress};
-use sophia_protocol::{
+use sophia_shell_protocol::{
     ContentAllocationId, ContentGrant, ContentOutputId, ContentPixelRect, ShellPersistentCatalog,
 };
 use std::collections::BTreeMap;

@@ -4,16 +4,25 @@ use provlita::{
     render::{GpuGrant, GpuWorker},
     service::DockService,
 };
-use sophia_protocol::*;
 use sophia_shell_client::{ShellClientOptions, ShellConnection};
+use sophia_shell_protocol::*;
 use std::{
     io::Read,
     time::{Duration, Instant},
 };
 
+// Sophia@bc23ee5b crates/sophia-protocol/src/packets/shell_launcher.rs. The
+// standalone shell SDK requires this bit in the dock mask but does not export
+// its name.
+const SOPHIA_SHELL_CAPABILITY_APPLICATION_CATALOG: u64 = 1 << 5;
+
 pub fn run() -> Result<(), String> {
-    let socket =
-        std::env::var_os("SOPHIA_SHELL_SOCKET").ok_or("SOPHIA_SHELL_SOCKET is required")?;
+    if std::env::var_os("SOPHIA_SHELL_SOCKET").is_some() {
+        return Err("SOPHIA_SHELL_SOCKET is unsupported; use SOPHIA_SHELL_9P_SOCKET".into());
+    }
+    let socket = std::env::var_os("SOPHIA_SHELL_9P_SOCKET")
+        .filter(|path| !path.is_empty())
+        .ok_or("SOPHIA_SHELL_9P_SOCKET is required")?;
     let config =
         std::env::var_os("SOPHIA_SHELL_CONFIG").ok_or("SOPHIA_SHELL_CONFIG is required")?;
     let mut text = String::new();
@@ -30,7 +39,7 @@ pub fn run() -> Result<(), String> {
     if allowance == 0 {
         return Err("zero dock allowance".into());
     }
-    let mut connection = ShellConnection::connect(
+    let mut connection = ShellConnection::connect_files(
         socket,
         ShellClientOptions {
             minimum_revision: 8,
@@ -44,6 +53,11 @@ pub fn run() -> Result<(), String> {
         },
     )
     .map_err(|e| format!("dock negotiation: {e}"))?;
+    println!(
+        "provlita_shell_transport schema=1 wire=9p2000.L revision={} epoch={}",
+        connection.welcome().selected_revision,
+        connection.connection_epoch()
+    );
     let mut worker = GpuWorker::start(GpuGrant::from_environment(connection.connection_epoch())?)?;
     let startup = (|| {
         loop {
@@ -61,7 +75,7 @@ pub fn run() -> Result<(), String> {
     let mut service = DockService::new(connection, config, allowance, worker)?;
     let error = loop {
         match service.step() {
-            Ok(_) => std::thread::sleep(Duration::from_millis(4)),
+            Ok(_) => std::thread::sleep(service.idle_wait()),
             Err(error) => break error,
         }
     };

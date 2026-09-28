@@ -3,7 +3,7 @@ use provlita::{
     config::Config,
     views::{DockViews, ViewIdentity},
 };
-use sophia_protocol::*;
+use sophia_shell_protocol::*;
 use std::collections::BTreeMap;
 
 fn catalog(generation: u64) -> ShellPersistentCatalog {
