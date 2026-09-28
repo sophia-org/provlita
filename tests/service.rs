@@ -5,6 +5,10 @@ mod files_wire;
 #[path = "support/service_host.rs"]
 mod host;
 use host::*;
+use provlita::{
+    service::StopReport,
+    stop::{StopRequests, StopSignal},
+};
 use sophia_shell_protocol::*;
 
 #[test]
@@ -118,4 +122,35 @@ fn candidate_over_the_permit_budget_is_refused_before_submission() {
     };
     assert_eq!(error, "dock candidate exceeds negotiated byte budget");
     assert!(peer.presented.is_empty(), "no candidate reached the peer");
+}
+
+#[test]
+fn sigterm_closes_the_connection_and_reports_an_unresolved_launch_without_replay() {
+    let stop = StopRequests::install().unwrap();
+    let (mut service, mut peer) = pair();
+    drive(&mut service, &mut peer, |p| p.presented.len() == 2);
+    peer.hold_outcomes = true;
+    peer.action(1, 1, 1);
+    drive(&mut service, &mut peer, |p| p.actions.len() == 1);
+    // Settle the reply's file custody so only the launch outcome stays open.
+    for _ in 0..3 {
+        peer.pump();
+        service.step().unwrap();
+    }
+    // A real process-directed signal; the handler only records it.
+    assert_eq!(unsafe { libc::raise(libc::SIGTERM) }, 0);
+    assert_eq!(stop.requested(), Some(StopSignal::Terminate));
+    let (report, _raster) = service.stop();
+    assert_eq!(
+        report,
+        StopReport {
+            sent_activations: 1,
+            unsent_replies: 0,
+            unsettled_submissions: 0,
+            rendering: false,
+        }
+    );
+    assert!(peer.disconnected_within(std::time::Duration::from_secs(2)));
+    // The one activation Session received is the only one: nothing replayed.
+    assert_eq!(peer.actions.len(), 1);
 }

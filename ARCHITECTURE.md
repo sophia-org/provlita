@@ -42,6 +42,20 @@ poison reuse, and failed rasterizers stay owned until explicit shutdown. Joining
 a finished worker proves thread exit, not Sophia credit reclamation or KMS cleanup.
 CPU rasterization is test-only evidence, never a production fallback.
 
+`--serve` installs SIGTERM/SIGINT handlers before reading configuration, so a
+PID-namespace init (bwrap `--as-pid-1`) can be stopped by its supervisor. The
+handler only records the first signal. It is observed at the next bounded turn:
+before connecting, after negotiation (the SDK handshake blocks, so at most its
+2 s deadline), during GPU admission, or between service turns. A stop takes no
+further turn, closes the connection and joins the GPU worker within 2 s, then
+prints `provlita_stop` and exits 0. It replays nothing: a sent activation's launch
+outcome stays with Session, and the record counts sent activations, unsent
+replies, submissions without observed custody and an in-flight GPU job. Joining
+the worker proves thread exit only; Session still owns content-resource, grant
+and KMS reclamation after disconnect. A worker unjoined at the deadline exits 2
+without claiming clean completion. The serving-phase stop is tested in-process
+with a real signal; a GPU-less binary cannot reach that phase in ordinary checks.
+
 Reuse reviewed generic shell lifecycle and render-admission seams. Extract only
 cohesive shared pieces from Lom when both clients exercise the same owner and
 controls. Provlita's UI/model must not depend on Lom's binary or workspace view.

@@ -30,6 +30,10 @@ impl CustodyWatch {
             self.pending.push_back(ticket);
         }
     }
+    /// Admitted tickets whose custody was still open at the last observation.
+    pub(super) fn unsettled(&self) -> usize {
+        self.pending.len()
+    }
     pub(super) fn observe(&mut self, connection: &ShellConnection) -> Result<(), String> {
         for _ in 0..self.pending.len() {
             let ticket = self.pending.pop_front().expect("bounded ticket count");

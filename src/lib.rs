@@ -2,5 +2,6 @@
 pub mod config;
 pub mod render;
 pub mod service;
+pub mod stop;
 pub mod ui;
 pub mod views;

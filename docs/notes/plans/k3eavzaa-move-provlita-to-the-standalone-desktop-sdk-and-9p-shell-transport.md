@@ -101,3 +101,15 @@ followed by the operator's attended check. t007 closes after both.
 
 - [Architecture](../../../ARCHITECTURE.md)
 - [Native dock critical path](r7k3m2va-native-dock-critical-path.md)
+
+## Graceful stop, 2026-09-27
+
+Live reload stops components with SIGTERM, and a component started as a bwrap
+`--as-pid-1` namespace init ignores that signal unless it installs a handler.
+`--serve` now installs SIGTERM/SIGINT handlers first; the semantics and limits are
+in ARCHITECTURE.md. `tests/stop.rs` sends real signals to the binary held in
+negotiation by a silent listener: SIGINT to a direct child, SIGTERM to the dock
+as namespace init, and a control showing a handler-less namespace init ignores
+the same SIGTERM. `tests/service.rs` raises SIGTERM in-process with a launch
+outcome held by the fixture, then checks the report, the disconnect and that no
+activation is replayed.

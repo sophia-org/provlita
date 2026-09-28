@@ -66,6 +66,8 @@ pub struct Peer {
     pub acks: Vec<ContentActionAck>,
     pub releases: Vec<(TransactionId, ContentResourceId)>,
     pub hold_releases: bool,
+    /// Record activations without sending their Session outcome.
+    pub hold_outcomes: bool,
     pub begins: usize,
     /// Refuse every submission of this kind with EACCES and no custody.
     pub refuse: Option<ShellFileKind>,
@@ -90,6 +92,7 @@ fn peer(wire: Wire) -> Peer {
         acks: Vec::new(),
         releases: Vec::new(),
         hold_releases: false,
+        hold_outcomes: false,
         begins: 0,
         refuse: None,
         permit_bytes: 8192,
@@ -287,6 +290,17 @@ impl Peer {
             }),
         );
     }
+    /// Whether the client closed its connection within `limit`.
+    pub fn disconnected_within(&mut self, limit: Duration) -> bool {
+        let start = Instant::now();
+        while start.elapsed() < limit {
+            if !self.wire.pump() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        false
+    }
     /// One bounded 9P pass, then every whole submission in order. Each is
     /// accepted (Submitted custody) before its semantic reply.
     pub fn pump(&mut self) {
@@ -400,6 +414,9 @@ impl Peer {
                 .any(|ack| ack.event_id == activation.action.event_id && ack.disposition == 1)
         );
         self.actions.push(activation.clone());
+        if self.hold_outcomes {
+            return;
+        }
         let (kind, body) = encode_shell_file_catalog_action_body(&ShellFileCatalogActionRecord {
             transaction: tx,
             record: ShellCatalogActionRecord::ActivationOutcome(CatalogActivationOutcome {

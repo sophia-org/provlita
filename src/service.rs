@@ -361,4 +361,30 @@ impl<R: RasterExecutor> DockService<R> {
     pub fn into_renderer(self) -> R {
         self.renderer
     }
+    /// Requested stop: take no further turn, close the connection and return
+    /// the renderer for bounded shutdown. Outstanding obligations are reported,
+    /// never retried; a sent activation's launch outcome remains with Session.
+    pub fn stop(self) -> (StopReport, R) {
+        let report = StopReport {
+            sent_activations: self.replies.iter().filter(|reply| reply.sent).count(),
+            unsent_replies: self.replies.iter().filter(|reply| !reply.sent).count(),
+            unsettled_submissions: self.custody.unsettled(),
+            rendering: self.rendering.is_some(),
+        };
+        drop(self.connection);
+        (report, self.renderer)
+    }
+}
+
+/// Obligations still open when a requested stop closed the connection.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StopReport {
+    /// Activations written to Session whose launch outcome is unknown here.
+    pub sent_activations: usize,
+    /// Action replies never admitted; Session saw no activation for them.
+    pub unsent_replies: usize,
+    /// Admitted submissions not yet observed as Submitted or Stored.
+    pub unsettled_submissions: usize,
+    /// A GPU job was in flight; its pixels are discarded at shutdown.
+    pub rendering: bool,
 }
