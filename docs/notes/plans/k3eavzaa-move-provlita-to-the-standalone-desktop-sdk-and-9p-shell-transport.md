@@ -81,6 +81,22 @@ These are scripted peer tests. They make no claim about Session policy, the
 production export, GPU execution or native presentation, and the current desktop
 was not modified.
 
+## Production-export verification, moved from Sophia t263 (2026-09-27)
+
+Sophia closed t263 with the SDK releases `sophia-desktop-sdk-rs` v0.1.0
+(`ea9cf651`, the revision this repository pins) and `sophia-desktop-sdk-c`
+v0.1.0. At the operator's direction, Provlita's check against a production
+Session export moved to this task. That check is external, like the Lom and
+Bemenu live runs, and belongs in the niltempus integration repository, not in
+Sophia or this repository's ordinary checks.
+
+It must run the dock through protected launch against a real persistent-catalog
+export. It must show a catalog read, allocation, upload through the slots,
+candidate presentation, one exact activation with its outcome, and retirement
+and release. It must also confirm the transport record and a refused
+`SOPHIA_SHELL_SOCKET`. Later live promotion adds the dock to a packaged profile,
+followed by the operator's attended check. t007 closes after both.
+
 ## Connections
 
 - [Architecture](../../../ARCHITECTURE.md)
