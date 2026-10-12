@@ -9,7 +9,7 @@ use provlita::{
     service::{DockService, StopReport},
     stop::{StopRequests, StopSignal},
 };
-use sophia_shell_client::{ShellClientOptions, ShellConnection};
+use sophia_shell_client::ShellClientOptions;
 use sophia_shell_protocol::*;
 use std::{
     io::Read,
@@ -48,7 +48,7 @@ pub fn run() -> Result<(), String> {
     if let Some(signal) = stop.requested() {
         return stopped(signal, "configuration", "none", StopReport::default(), None);
     }
-    let connected = ShellConnection::connect_files(
+    let connected = crate::authentication::connect(
         socket,
         ShellClientOptions {
             minimum_revision: 8,
@@ -60,6 +60,7 @@ pub fn run() -> Result<(), String> {
                 | SOPHIA_SHELL_CAPABILITY_WORK_AREA_RESERVATION,
             handshake_timeout: Duration::from_secs(2),
         },
+        || stop.requested().is_some(),
     );
     // A stop during the blocking handshake takes precedence over its outcome;
     // any established connection is dropped (closed) before reporting.
@@ -77,7 +78,8 @@ pub fn run() -> Result<(), String> {
             None,
         );
     }
-    let mut connection = connected.map_err(|e| format!("dock negotiation: {e}"))?;
+    let (mut connection, _generation_channel) =
+        connected.map_err(|e| format!("dock negotiation: {e}"))?;
     println!(
         "provlita_shell_transport schema=1 wire=9p2000.L revision={} epoch={}",
         connection.welcome().selected_revision,

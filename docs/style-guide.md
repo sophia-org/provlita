@@ -38,6 +38,11 @@ Provlita-owned implementation. Tests exercise threshold boundaries, tracked
 ignored files, read failures and symlink refusal. cargo test invokes the actual
 audit too. Keep test bodies outside src and public APIs shaped for production.
 
+The private binary authentication module mounts
+`tests/support/authentication.rs` to check inherited descriptor parsing and
+actual CLOEXEC adoption over private socket pairs. This keeps the fd-owning
+startup helper private and introduces no display or GPU test access.
+
 Run sh tools/check.sh. It includes tooling regressions, actual layout audit,
 formatting, tests and strict Clippy. Keep compiler warnings at zero. Evidence
 must identify source and distinguish CPU fixtures, GPU rendering and native

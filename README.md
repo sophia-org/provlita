@@ -10,6 +10,16 @@ The intended stack is Xilem/Masonry + Vello through Sophia's 9P shell file
 contract, using the standalone Rust desktop SDK; no GTK, X11, Wayland endpoint
 or private display server.
 
+Protected startup consumes `SOPHIA_LAUNCH_AUTH_FD` through the standalone SDK's
+launch conversation, using the `shell` / `dock` claim. Session chooses the
+identity and authority. The inherited descriptor is validated and marked
+close-on-exec before connecting the role socket. The shell client continues on
+the admitted root without another attach, retaining the generation channel
+through shutdown. Invalid descriptors or authentication errors do not retry with
+plain attach. Supplied standalone conformance sockets without that variable
+keep their existing plain-attach path. GPU initialization follows authentication
+and shell negotiation; this change grants no device access.
+
 The first milestone is pinned application tiles on both monitors alongside Lom
 and Bemenu, with exact launch authorization and independent cleanup. Running-app
 tracking, previews, drag-and-drop and auto-hide are deferred.

@@ -45,8 +45,9 @@ CPU rasterization is test-only evidence, never a production fallback.
 `--serve` installs SIGTERM/SIGINT handlers before reading configuration, so a
 PID-namespace init (bwrap `--as-pid-1`) can be stopped by its supervisor. The
 handler only records the first signal. It is observed at the next bounded turn:
-before connecting, after negotiation (the SDK handshake blocks, so at most its
-2 s deadline), during GPU admission, or between service turns. A stop takes no
+before connecting, between authentication and role negotiation (each SDK
+handshake has its own 2 s bound), during GPU admission, or between service turns.
+The nonblocking authentication turns check stop at most 50 ms apart. A stop takes no
 further turn, closes the connection and joins the GPU worker within 2 s, then
 prints `provlita_stop` and exits 0. It replays nothing: a sent activation's launch
 outcome stays with Session, and the record counts sent activations, unsent

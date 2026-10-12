@@ -1,4 +1,5 @@
 //! Configuration checks and explicit protected native serving.
+mod authentication;
 mod serve;
 use std::io::Read;
 

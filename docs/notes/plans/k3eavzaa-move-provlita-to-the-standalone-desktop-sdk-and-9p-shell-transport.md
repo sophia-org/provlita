@@ -129,3 +129,25 @@ formatting and strict clippy. Earlier mutation controls are recorded in
 was explicitly seeded from the published SDK's local source. The gate had no
 network, display or devices. Production-export and native acceptance remain
 separate; no installed component changed.
+
+## Authenticated launch migration (2026-10-12)
+
+The SDK pin is signed `9b9e9bf1b0c7ad194f507dfdb383d25ddc1553ce`.
+Production serve startup now adopts the supervisor's generation descriptor,
+authenticates the `shell` / `dock` claim, and continues shell negotiation on
+the admitted root without reattaching. It retains the generation channel until
+shutdown and checks stop before beginning the second handshake. Invalid or
+closed descriptors cannot fall back to the standalone plain-attach path. This
+does not change the GPU-library pin or broaden GPU permissions.
+
+The device-hidden full gate passed 29 Rust tests, tooling regressions, layout,
+formatting and strict Clippy. In addition to parser and real CLOEXEC tests, the
+binary-level control supplies malformed/closed descriptors and a listening role
+socket: startup exits 2 without ever connecting to that socket. Existing signal
+and shutdown tests still pass. No successful protected afid/owner join or native
+GPU result is claimed by these local checks.
+
+Package `t317-provlita-authentication-01` records the source inventory and logs.
+Its manifest SHA-256 is
+`2fd156517c5e75b2ed092bfd4ae01e42b078b275175d0974b98624c4916a4b1c`.
+No binaries were copied into evidence and no installed component changed.
