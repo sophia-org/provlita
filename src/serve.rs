@@ -48,16 +48,24 @@ pub fn run() -> Result<(), String> {
     if let Some(signal) = stop.requested() {
         return stopped(signal, "configuration", "none", StopReport::default(), None);
     }
+    // The ISB migration requires the sealed image capability at r9;
+    // there is no byte-upload fallback. The endpoint directory is the
+    // parent of the exact role socket path, per the image contract.
+    let endpoint_dir = std::path::PathBuf::from(&socket)
+        .parent()
+        .map(|parent| parent.to_path_buf())
+        .ok_or("shell socket path has no parent directory")?;
     let connected = crate::authentication::connect(
         socket,
         ShellClientOptions {
-            minimum_revision: 8,
-            maximum_revision: 8,
+            minimum_revision: 9,
+            maximum_revision: 9,
             required_capabilities: SOPHIA_SHELL_CAPABILITY_PERSISTENT_CATALOG
                 | SOPHIA_SHELL_CAPABILITY_APPLICATION_CATALOG
                 | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
                 | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
-                | SOPHIA_SHELL_CAPABILITY_WORK_AREA_RESERVATION,
+                | SOPHIA_SHELL_CAPABILITY_WORK_AREA_RESERVATION
+                | sophia_shell_client::IMAGE_CAPABILITY_SEALED,
             handshake_timeout: Duration::from_secs(2),
         },
         || stop.requested().is_some(),
@@ -113,7 +121,7 @@ pub fn run() -> Result<(), String> {
         }
         Err(error) => return finish(worker, error),
     }
-    let mut service = DockService::new(connection, config, allowance, worker)?;
+    let mut service = DockService::new(connection, config, allowance, worker, endpoint_dir)?;
     let error = loop {
         if let Some(signal) = stop.requested() {
             let (report, worker) = service.stop();

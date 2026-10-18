@@ -97,11 +97,33 @@ impl Wire {
         );
     }
 
+    /// One r9 image-channel event (ChannelReady, ImageAdmitted,
+    /// SourceReleased); the r8 envelope refuses these kinds.
+    pub fn event_image(&mut self, kind: ShellFileKind, body: &[u8]) {
+        self.sequence += 1;
+        self.events.extend(
+            encode_shell_file_record_at_revision(
+                ShellFileHeader {
+                    kind,
+                    connection_epoch: EPOCH,
+                    submission_id: 0,
+                    sequence: self.sequence,
+                },
+                body,
+                9,
+            )
+            .unwrap(),
+        );
+    }
+
     pub fn accept(&mut self, submission: &Submission, kind: ShellFileKind) {
-        let body = encode_shell_file_submitted_body(ShellFileSubmitted {
-            submission_id: submission.id,
-            candidate_kind: kind,
-        })
+        let body = encode_shell_file_submitted_body_at_revision(
+            ShellFileSubmitted {
+                submission_id: submission.id,
+                candidate_kind: kind,
+            },
+            9,
+        )
         .unwrap();
         self.event(ShellFileKind::Submitted, &body);
         self.accepted = self.sequence;
@@ -239,12 +261,25 @@ impl Wire {
                         self.transaction.extend(bytes);
                         self.write_reply(tag, count);
                     }
+                    // r9 reusable transactions: each submission record
+                    // starts again at offset zero on the reuse node.
+                    "transaction-reuse" => {
+                        if offset == 0 {
+                            self.transaction.clear();
+                        }
+                        assert_eq!(offset, self.transaction.len());
+                        self.transaction.extend(bytes);
+                        self.write_reply(tag, count);
+                    }
                     "submit" => {
                         let submit = decode_shell_file_submit(bytes).unwrap();
-                        let header =
-                            decode_shell_file_record(&self.transaction, ShellFileClass::Candidate)
-                                .unwrap()
-                                .header;
+                        let header = decode_shell_file_record_at_revision(
+                            &self.transaction,
+                            ShellFileClass::Candidate,
+                            9,
+                        )
+                        .unwrap()
+                        .header;
                         assert_eq!(
                             (submit.connection_epoch, submit.submission_id),
                             (EPOCH, header.submission_id)

@@ -155,33 +155,72 @@ fn sigterm_closes_the_connection_and_reports_an_unresolved_launch_without_replay
     assert_eq!(peer.actions.len(), 1);
 }
 
-/// Upload chunks are `max_chunk_bytes` of whole rows (t268): at widths where
-/// whole rows exactly fill the chunk and one past, every upload declares the
-/// canonical count, which the peer's SDK decoder checks independently. The
-/// file wire's grant is the prototype, whose frame cap is exactly chunk + 48,
-/// so the old frame-derived chunk was the same value; this pins the count,
-/// not a difference.
 #[test]
-fn uploads_declare_the_canonical_chunk_count_at_row_boundaries() {
-    let chunk = ContentLimits::prototype(grant()).max_chunk_bytes;
-    assert_eq!(chunk, 65488);
-    for (width, rows) in [(800, 20), (4093, 4), (4094, 3), (8186, 2), (8187, 1)] {
-        assert_eq!(chunk / (width * 4), rows, "fixture arithmetic");
+fn channel_closed_before_source_is_an_explicit_error_without_fallback() {
+    let (mut service, mut peer) = pair();
+    peer.close_after_ready = true;
+    let start = std::time::Instant::now();
+    let error = loop {
+        if let Err(error) = service.step() {
+            break error;
+        }
+        peer.pump();
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "channel closure was not observed"
+        );
+        std::thread::yield_now();
+    };
+    // Either the pending Begin sees the closed channel, or the
+    // in-flight offer is expired by it; both are explicit failures.
+    assert!(error.contains("image"), "{error}");
+    assert!(
+        peer.presented.is_empty(),
+        "no candidate follows a closed image channel"
+    );
+}
+
+#[test]
+fn unsettled_image_times_out_without_declaring_the_resource_resident() {
+    let (mut service, mut peer) = pair();
+    peer.hold_image_settle = true;
+    let start = std::time::Instant::now();
+    let error = loop {
+        if let Err(error) = service.step() {
+            break error;
+        }
+        peer.pump();
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "unsettled image did not time out"
+        );
+        std::thread::yield_now();
+    };
+    assert!(error.contains("timed out"), "{error}");
+    assert!(peer.begins >= 1, "the offer was sent and accepted");
+    assert!(
+        peer.presented.is_empty(),
+        "an unsettled source never reaches a candidate"
+    );
+}
+
+/// Every image crosses as one sealed ISB offer: exact tight BGRA
+/// geometry, one plane and one descriptor, at several widths. The
+/// peer verifies the sealed bytes before Accepted + Settled 1.
+#[test]
+fn sealed_images_declare_exact_geometry_at_widths() {
+    for width in [800, 4093, 8187] {
         let (mut service, mut peer) = pair_with_width(width);
         drive(&mut service, &mut peer, |p| p.presented.len() == 2);
         let begins = peer.declared_begins();
-        assert_eq!(begins.len(), 2, "one upload per output");
+        assert_eq!(begins.len(), 2, "one sealed image per output");
         for begin in begins {
-            assert_eq!(begin.width_px, width);
-            let expected = begin.height_px.div_ceil(rows);
-            assert_eq!(begin.chunk_count, expected, "width {width}");
-            let layout = begin
-                .layout(&ContentLimits::prototype(begin.grant))
-                .unwrap();
-            assert_eq!(
-                (layout.rows_per_chunk, layout.chunk_count),
-                (rows, expected)
-            );
+            assert_eq!(begin.width, width);
+            assert_eq!(begin.height, 64);
+            assert_eq!(begin.stride, width * 4);
+            assert_eq!(begin.declared_bytes, u64::from(width) * 64 * 4);
+            assert_eq!((begin.source_kind, begin.source_format), (1, 1));
+            assert_eq!((begin.plane_count, begin.descriptor_count), (1, 1));
         }
     }
 }

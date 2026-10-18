@@ -12,13 +12,33 @@ use crate::{
     views::{DockViews, ViewIdentity, ViewMetadata},
 };
 use sophia_shell_client::{
-    CatalogInbox, CatalogObservation, ContentLifecycle, ShellClientError, ShellConnection,
+    CatalogInbox, CatalogObservation, ContentLifecycle, ProducerRoleBounds, ShellClientError,
+    ShellConnection, ShellImageConfig,
 };
 use sophia_shell_protocol::*;
 use std::{
     collections::VecDeque,
+    path::PathBuf,
     time::{Duration, Instant},
 };
+
+/// Absolute CLOCK_MONOTONIC milliseconds, paired with an `Instant`
+/// taken at the same moment for the image adapter's clock domain.
+fn monotonic_ms() -> Result<u64, String> {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `ts` is a valid out-pointer for the duration of the call.
+    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) } != 0 {
+        return Err("CLOCK_MONOTONIC unavailable".into());
+    }
+    let ms = (ts.tv_sec as u64)
+        .checked_mul(1_000)
+        .and_then(|ms| ms.checked_add((ts.tv_nsec / 1_000_000) as u64))
+        .ok_or("CLOCK_MONOTONIC overflow")?;
+    Ok(ms)
+}
 use upload::{Pending, Phase};
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -91,8 +111,8 @@ struct ActionReply {
     deadline: Instant,
 }
 
-/// One exact connection, up to sixteen outputs, two resource slots per output,
-/// one GPU job and four upload chunks per turn. All bounds remain subordinate
+/// One exact connection, up to sixteen outputs, two resource slots per output
+/// and one GPU job per turn. All bounds remain subordinate
 /// to negotiated aggregate limits. Fatal protocol errors require disconnect;
 /// this object never retries an unknown launch effect in a fresh connection.
 pub struct DockService<R> {
@@ -116,6 +136,7 @@ pub struct DockService<R> {
     job: u64,
     cursor: usize,
     started: Instant,
+    endpoint_dir: PathBuf,
 }
 impl<R: RasterExecutor> DockService<R> {
     /// Construct only after negotiation and explicit GPU admission. No socket
@@ -125,9 +146,10 @@ impl<R: RasterExecutor> DockService<R> {
         config: Config,
         allowance: u32,
         renderer: R,
+        endpoint_dir: PathBuf,
     ) -> Result<Self, String> {
-        if connection.welcome().selected_revision != 8 || allowance == 0 {
-            return Err("dock requires revision 8 and an explicit edge allowance".into());
+        if connection.welcome().selected_revision != 9 || allowance == 0 {
+            return Err("dock requires revision 9 and an explicit edge allowance".into());
         }
         let inbox = CatalogInbox::new(connection.connection_epoch()).map_err(|e| e.to_string())?;
         Ok(Self {
@@ -151,6 +173,7 @@ impl<R: RasterExecutor> DockService<R> {
             job: 1,
             cursor: 0,
             started: Instant::now(),
+            endpoint_dir,
         })
     }
     /// Maximum idle sleep before the next turn: the SDK's retry or readiness
@@ -215,11 +238,10 @@ impl<R: RasterExecutor> DockService<R> {
             let rendering = self.rendering.take().expect("checked rendering owner");
             self.finish_render(rendering, result)?;
         }
-        let mut chunks = 4;
         let count = self.outputs.len();
         for n in 0..count {
             let index = (self.cursor + n) % count;
-            self.advance(index, &mut chunks)?;
+            self.advance(index)?;
             self.retire(index)?;
         }
         if self.rendering.is_none() {

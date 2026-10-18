@@ -6,9 +6,7 @@ use sophia_shell_protocol::encoding::catalog_actions::encode_catalog_content_can
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum Phase {
     Begin,
-    WaitBegin,
-    Chunks,
-    WaitEnd,
+    WaitImage,
     Demand,
     WaitPermit,
     Candidate,
@@ -18,10 +16,11 @@ pub(super) struct Pending {
     pub slot: usize,
     pub view: ViewMetadata,
     pub bytes: Vec<u8>,
-    pub chunk_bytes: usize,
-    pub chunk_count: u32,
-    pub chunk: u32,
-    pub upload_tx: TransactionId,
+    /// The sealed source, retained only while `image_begin` refuses
+    /// it with Busy; the producer owns it after admission.
+    pub source: Option<std::os::fd::OwnedFd>,
+    pub offer: Option<u64>,
+    pub accepted: bool,
     pub demand_tx: TransactionId,
     pub candidate_tx: TransactionId,
     pub demand: u64,
@@ -62,23 +61,13 @@ impl<R: RasterExecutor> DockService<R> {
             pixel[1] = pm(pixel[1]);
             pixel[2] = r;
         }
-        let limits = self.limits.as_ref().expect("limits");
-        let row = result.width as usize * 4;
-        // Whole rows within the file wire's canonical upload chunk; the SDK
-        // validated these Limits when the grant arrived.
-        let chunk_bytes = limits.max_chunk_bytes as usize / row * row;
-        if chunk_bytes == 0 {
-            return Err("negotiated chunk cannot hold a row".into());
-        }
-        let upload_tx = self.tx()?;
         self.outputs[rendering.output].pending = Some(Pending {
             slot: rendering.slot,
             view: rendering.view,
-            chunk_count: result.bytes.len().div_ceil(chunk_bytes) as u32,
             bytes: result.bytes,
-            chunk_bytes,
-            chunk: 0,
-            upload_tx,
+            source: None,
+            offer: None,
+            accepted: false,
             demand_tx: TransactionId::from_raw(0),
             candidate_tx: TransactionId::from_raw(0),
             demand: 0,
@@ -89,7 +78,7 @@ impl<R: RasterExecutor> DockService<R> {
         });
         Ok(())
     }
-    pub(super) fn advance(&mut self, index: usize, chunks: &mut usize) -> Result<(), String> {
+    pub(super) fn advance(&mut self, index: usize) -> Result<(), String> {
         let Some(pending) = &self.outputs[index].pending else {
             return Ok(());
         };
@@ -107,6 +96,19 @@ impl<R: RasterExecutor> DockService<R> {
         let mut resource = self.outputs[index].slots[slot].resource;
         match phase {
             Phase::Begin => {
+                // No image moves before the sealed channel is Ready;
+                // a closed channel is an explicit session failure,
+                // never a byte-upload fallback.
+                let Some(adapter) = self.connection.image_adapter() else {
+                    return Err("sealed image channel was not enabled".into());
+                };
+                match adapter.channel() {
+                    Some(sophia_shell_client::ImageChannelState::Ready) => {}
+                    Some(sophia_shell_client::ImageChannelState::Closed) => {
+                        return Err("sealed image channel closed before Source".into());
+                    }
+                    _ => return Ok(()),
+                }
                 let first = resource.id == 0;
                 if first {
                     resource.id = self.resource;
@@ -115,66 +117,105 @@ impl<R: RasterExecutor> DockService<R> {
                     .resource
                     .checked_add(1)
                     .ok_or("resource IDs exhausted")?;
-                let tx = pending.upload_tx;
-                let record = ShellContentRecord::ResourceBegin(ContentResourceBegin {
-                    grant: limits.grant,
-                    resource,
-                    width_px: allocation.pixel.width,
-                    height_px: allocation.pixel.height,
-                    rendered_scale_numerator: allocation.scale_numerator,
-                    rendered_scale_denominator: allocation.scale_denominator,
-                    pixel_format: 1,
-                    chunk_count: pending.chunk_count,
-                    total_bytes: pending.bytes.len() as u64,
-                });
-                if self.enqueue(tx, record)? {
-                    if first {
-                        self.resource = next;
+                let pending = self.outputs[index].pending.as_mut().unwrap();
+                if pending.source.is_none() {
+                    let width = allocation.pixel.width;
+                    let height = allocation.pixel.height;
+                    let isb = sophia_image_producer::create_isb(width, height)
+                        .map_err(|e| format!("sealed source create: {e:?}"))?;
+                    isb.write_pixels(0, &pending.bytes)
+                        .map_err(|e| format!("sealed source fill: {e:?}"))?;
+                    sophia_image_producer::finish_isb(&isb)
+                        .map_err(|e| format!("sealed source seal: {e:?}"))?;
+                    pending.source = Some(isb.into_fd());
+                }
+                let source = pending.source.take().unwrap();
+                let metadata = sophia_shell_client::ProducerMetadata {
+                    offer_id: 0,
+                    resource: resource.id,
+                    resource_generation: resource.generation,
+                    admission_epoch: limits.grant.content_grant_epoch,
+                    output_id: allocation.output.id,
+                    allocation_id: allocation.allocation.id,
+                    topology_generation: self.facts.as_ref().expect("facts").facts_generation,
+                    source_kind: 1,
+                    source_format: 1,
+                    width: allocation.pixel.width,
+                    height: allocation.pixel.height,
+                    stride: allocation.pixel.width * 4,
+                    plane_count: 1,
+                    descriptor_count: 1,
+                    declared_bytes: pending.bytes.len() as u64,
+                    modifier: 0,
+                };
+                match self
+                    .connection
+                    .image_begin(metadata, source, Instant::now())
+                {
+                    Ok(admission) => {
+                        self.custody.record_ticket(admission.ticket);
+                        if first {
+                            self.resource = next;
+                        }
+                        self.outputs[index].slots[slot].resource = resource;
+                        let pending = self.outputs[index].pending.as_mut().unwrap();
+                        pending.offer = Some(admission.offer);
+                        pending.phase = Phase::WaitImage;
+                        pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
                     }
-                    self.outputs[index].slots[slot].resource = resource;
-                    self.outputs[index].pending.as_mut().unwrap().phase = Phase::WaitBegin;
+                    Err(error) => {
+                        use sophia_shell_client::ImageAdapterError;
+                        if matches!(
+                            error.error,
+                            ImageAdapterError::Busy | ImageAdapterError::Again
+                        ) {
+                            // The descriptor came back; retry next turn.
+                            self.outputs[index].pending.as_mut().unwrap().source = error.source;
+                            return Ok(());
+                        }
+                        return Err(format!("sealed image begin refused: {:?}", error.error));
+                    }
                 }
             }
-            Phase::Chunks => {
-                while *chunks > 0 {
-                    let pending = self.outputs[index].pending.as_ref().unwrap();
-                    if pending.chunk == pending.chunk_count {
-                        break;
-                    }
-                    let start = pending.chunk as usize * pending.chunk_bytes;
-                    let end = (start + pending.chunk_bytes).min(pending.bytes.len());
-                    let record = ShellContentRecord::ResourceChunk(ContentResourceChunk {
-                        grant: limits.grant,
-                        resource,
-                        ordinal: pending.chunk,
-                        offset: start as u64,
-                        bytes: pending.bytes[start..end].to_vec(),
-                    });
-                    let tx = pending.upload_tx;
-                    if !self.enqueue(tx, record)? {
-                        return Ok(());
-                    }
-                    self.outputs[index].pending.as_mut().unwrap().chunk += 1;
-                    *chunks -= 1;
-                }
+            Phase::WaitImage => {
                 let pending = self.outputs[index].pending.as_ref().unwrap();
-                if pending.chunk == pending.chunk_count {
-                    let (tx, bytes, count) = (
-                        pending.upload_tx,
-                        pending.bytes.len() as u64,
-                        pending.chunk_count,
-                    );
-                    if self.enqueue(
-                        tx,
-                        ShellContentRecord::ResourceEnd(ContentResourceEnd {
-                            grant: limits.grant,
-                            resource,
-                            total_bytes: bytes,
-                            chunk_count: count,
-                        }),
-                    )? {
-                        self.outputs[index].pending.as_mut().unwrap().phase = Phase::WaitEnd;
+                let offer = pending.offer.ok_or("image offer was not recorded")?;
+                let info = self
+                    .connection
+                    .image_adapter()
+                    .and_then(|adapter| adapter.offer(offer))
+                    .ok_or("image offer vanished before settlement")?;
+                use sophia_shell_client::OfferState;
+                match info.state {
+                    OfferState::Settled => {
+                        if !pending.accepted
+                            || info.status
+                                != Some(sophia_image_producer::ResourceStatusKind::Accepted)
+                            || info.disposition != 1
+                        {
+                            return Err(
+                                "image settled without Accepted and Settled disposition 1".into()
+                            );
+                        }
+                        self.connection
+                            .image_forget(offer)
+                            .map_err(|e| format!("image forget: {e:?}"))?;
+                        let pending = self.outputs[index].pending.as_mut().unwrap();
+                        pending.bytes = Vec::new();
+                        pending.phase = Phase::Demand;
+                        pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
+                        self.outputs[index].slots[slot].state = ResourceState::Resident;
                     }
+                    OfferState::Refused
+                    | OfferState::Ambiguous
+                    | OfferState::Expired
+                    | OfferState::Unknown => {
+                        return Err(format!(
+                            "image offer ended in {:?} before settlement",
+                            info.state
+                        ));
+                    }
+                    _ => {}
                 }
             }
             Phase::Demand => {

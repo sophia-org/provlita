@@ -46,6 +46,27 @@ impl<R: RasterExecutor> DockService<R> {
             self.lifecycle =
                 Some(ContentLifecycle::new(limits.clone()).map_err(|e| format!("limits: {e:?}"))?);
             self.limits = Some(limits.clone());
+            // Image admission is mandatory on this client: enable the
+            // sealed channel from the negotiated limits, or fail the
+            // session. There is no byte-upload fallback.
+            let origin = Instant::now();
+            let origin_ms = monotonic_ms()?;
+            let image = ShellImageConfig {
+                endpoint_dir: self.endpoint_dir.clone(),
+                bounds: ProducerRoleBounds {
+                    max_resource_bytes: limits.max_resource_bytes,
+                    max_width: limits.max_width_px,
+                    max_height: limits.max_height_px,
+                    max_admitted_outputs: limits.max_outputs,
+                    transfer_slots: limits.max_open_transfers,
+                },
+                transfer_timeout_ms: limits.transfer_timeout_ms,
+                startup_deadline_ms: origin_ms + u64::from(limits.transfer_timeout_ms),
+                formats_capacity: 4096,
+            };
+            self.connection
+                .enable_image(image, origin, origin_ms)
+                .map_err(|e| format!("sealed image channel is required: {e}"))?;
             return Ok(0);
         }
         let dispatch = self
@@ -127,18 +148,21 @@ impl<R: RasterExecutor> DockService<R> {
                     })
                     .ok_or("resource status names no pending upload")?;
                 let pending = output.pending.as_mut().unwrap();
-                if pending.upload_tx != tx || status.reason != 0 {
-                    return Err("resource upload refused or wrong transaction".into());
+                if pending.phase != Phase::WaitImage || status.reason != 0 {
+                    return Err("resource status refused or in wrong phase".into());
                 }
-                match (pending.phase, status.status) {
-                    (Phase::WaitBegin, 1) => pending.phase = Phase::Chunks,
-                    (Phase::WaitEnd, 2) => {
-                        pending.bytes = Vec::new();
-                        pending.phase = Phase::Demand;
-                        output.slots[pending.slot].state = ResourceState::Resident;
-                    }
-                    _ => return Err("unexpected resource acknowledgement phase".into()),
+                // The producer routed this status to the offer by exact
+                // resource identity before delivery; confirm it accepted.
+                let offer = pending.offer.ok_or("image status before ImageBegin")?;
+                let info = self
+                    .connection
+                    .image_adapter()
+                    .and_then(|adapter| adapter.offer(offer))
+                    .ok_or("image status names no live offer")?;
+                if info.status != Some(sophia_image_producer::ResourceStatusKind::Accepted) {
+                    return Err("image resource was not accepted".into());
                 }
+                pending.accepted = true;
                 pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
             }
             ShellContentRecord::FramePermit(permit) => {

@@ -1558,6 +1558,7 @@ dependencies = [
  "masonry",
  "masonry_testing",
  "sophia-9p-client",
+ "sophia-image-producer",
  "sophia-launch-client",
  "sophia-shell-client",
  "sophia-shell-gpu",
@@ -1845,7 +1846,7 @@ checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
 [[package]]
 name = "sophia-9p-client"
 version = "0.3.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=9b9e9bf1b0c7ad194f507dfdb383d25ddc1553ce#9b9e9bf1b0c7ad194f507dfdb383d25ddc1553ce"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=9495fc426951bf168dcf827c67a231a5028e508c#9495fc426951bf168dcf827c67a231a5028e508c"
 dependencies = [
  "rustix",
  "sophia-9p-records",
@@ -1854,30 +1855,46 @@ dependencies = [
 [[package]]
 name = "sophia-9p-records"
 version = "0.3.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=9b9e9bf1b0c7ad194f507dfdb383d25ddc1553ce#9b9e9bf1b0c7ad194f507dfdb383d25ddc1553ce"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=9495fc426951bf168dcf827c67a231a5028e508c#9495fc426951bf168dcf827c67a231a5028e508c"
 
 [[package]]
 name = "sophia-desktop-ids"
 version = "0.3.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=9b9e9bf1b0c7ad194f507dfdb383d25ddc1553ce#9b9e9bf1b0c7ad194f507dfdb383d25ddc1553ce"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=9495fc426951bf168dcf827c67a231a5028e508c#9495fc426951bf168dcf827c67a231a5028e508c"
+
+[[package]]
+name = "sophia-image-producer"
+version = "0.3.0"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=9495fc426951bf168dcf827c67a231a5028e508c#9495fc426951bf168dcf827c67a231a5028e508c"
+dependencies = [
+ "rustix",
+ "sophia-lock-protocol",
+ "sophia-shell-protocol",
+]
 
 [[package]]
 name = "sophia-launch-client"
 version = "0.3.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=9b9e9bf1b0c7ad194f507dfdb383d25ddc1553ce#9b9e9bf1b0c7ad194f507dfdb383d25ddc1553ce"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=9495fc426951bf168dcf827c67a231a5028e508c#9495fc426951bf168dcf827c67a231a5028e508c"
 dependencies = [
  "rustix",
  "sophia-9p-client",
 ]
 
 [[package]]
+name = "sophia-lock-protocol"
+version = "0.3.0"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=9495fc426951bf168dcf827c67a231a5028e508c#9495fc426951bf168dcf827c67a231a5028e508c"
+
+[[package]]
 name = "sophia-shell-client"
 version = "0.3.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=9b9e9bf1b0c7ad194f507dfdb383d25ddc1553ce#9b9e9bf1b0c7ad194f507dfdb383d25ddc1553ce"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=9495fc426951bf168dcf827c67a231a5028e508c#9495fc426951bf168dcf827c67a231a5028e508c"
 dependencies = [
  "rustix",
  "sophia-9p-client",
  "sophia-9p-records",
+ "sophia-image-producer",
  "sophia-shell-protocol",
 ]
 
@@ -1897,7 +1914,7 @@ dependencies = [
 [[package]]
 name = "sophia-shell-protocol"
 version = "0.3.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=9b9e9bf1b0c7ad194f507dfdb383d25ddc1553ce#9b9e9bf1b0c7ad194f507dfdb383d25ddc1553ce"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=9495fc426951bf168dcf827c67a231a5028e508c#9495fc426951bf168dcf827c67a231a5028e508c"
 dependencies = [
  "sophia-desktop-ids",
 ]
