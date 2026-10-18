@@ -12,11 +12,11 @@ publish = false
 missing_docs = "warn"
 
 [dependencies]
-sophia-launch-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "9495fc426951bf168dcf827c67a231a5028e508c" }
-sophia-9p-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "9495fc426951bf168dcf827c67a231a5028e508c" }
-sophia-shell-protocol = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "9495fc426951bf168dcf827c67a231a5028e508c" }
-sophia-shell-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "9495fc426951bf168dcf827c67a231a5028e508c" }
-sophia-image-producer = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "9495fc426951bf168dcf827c67a231a5028e508c" }
+sophia-launch-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "fbde253ef297e282357080600a560f1824cd6b50" }
+sophia-9p-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "fbde253ef297e282357080600a560f1824cd6b50" }
+sophia-shell-protocol = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "fbde253ef297e282357080600a560f1824cd6b50" }
+sophia-shell-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "fbde253ef297e282357080600a560f1824cd6b50" }
+sophia-image-producer = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "fbde253ef297e282357080600a560f1824cd6b50" }
 sophia-shell-gpu = { git = "https://github.com/sophia-org/lom", rev = "ad349869a8ce3f9eff77c6b91465b80cb54198b6" }
 kdl = { version = "=6.7.1", default-features = false, features = ["span"] }
 xilem_masonry = { git = "https://github.com/linebender/xilem", rev = "b81d8d7a631849def6eeab282561439b963862e5", default-features = false }
