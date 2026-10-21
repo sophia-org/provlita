@@ -30,12 +30,6 @@ impl CustodyWatch {
             self.pending.push_back(ticket);
         }
     }
-    /// Record one image-begin ticket, which the SDK returns outside
-    /// an `Admission` bundle.
-    pub(super) fn record_ticket(&mut self, ticket: Ticket) {
-        self.last = ticket.0;
-        self.pending.push_back(ticket);
-    }
     /// Admitted tickets whose custody was still open at the last observation.
     pub(super) fn unsettled(&self) -> usize {
         self.pending.len()

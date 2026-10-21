@@ -24,14 +24,14 @@ use std::{
 // standalone shell SDK requires this bit in the dock mask but does not export
 // its name.
 const SOPHIA_SHELL_CAPABILITY_APPLICATION_CATALOG: u64 = 1 << 5;
-// Negotiated capability bit 13: sealed image channel (ISB).
-const SOPHIA_SHELL_CAPABILITY_SEALED_IMAGE: u64 = 1 << 13;
+// Negotiated capability bit 15: owned-ring image channel.
+const SOPHIA_SHELL_CAPABILITY_OWNED_RING_IMAGE: u64 = 1 << 15;
 const CAPABILITIES: u64 = SOPHIA_SHELL_CAPABILITY_PERSISTENT_CATALOG
     | SOPHIA_SHELL_CAPABILITY_APPLICATION_CATALOG
     | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
     | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
     | SOPHIA_SHELL_CAPABILITY_WORK_AREA_RESERVATION
-    | SOPHIA_SHELL_CAPABILITY_SEALED_IMAGE;
+    | SOPHIA_SHELL_CAPABILITY_OWNED_RING_IMAGE;
 
 pub fn grant() -> ContentGrant {
     ContentGrant {
@@ -69,10 +69,10 @@ pub struct Peer {
     /// Send ChannelClosed right after ChannelReady is consumed.
     pub close_after_ready: bool,
     channel_closed_sent: bool,
-    /// Verify Sources and send Accepted, but never SourceReleased.
+    /// Verify offered slots and send Accepted, but never SlotReleased.
     pub hold_image_settle: bool,
-    next_offer: u64,
-    admit_queue: Vec<(TransactionId, ShellImageMetadata, bool)>,
+    ring: Option<(RingIdentity, u64, std::os::fd::OwnedFd)>,
+    pending_ring: Option<RingRegistration>,
     pub presented: BTreeMap<u64, (u64, CatalogCandidateBegin, ContentCandidateChunk)>,
     pub actions: Vec<CatalogActivation>,
     pub acks: Vec<ContentActionAck>,
@@ -106,8 +106,8 @@ fn peer(wire: Wire) -> Peer {
         close_after_ready: false,
         channel_closed_sent: false,
         hold_image_settle: false,
-        next_offer: 0,
-        admit_queue: Vec::new(),
+        ring: None,
+        pending_ring: None,
         presented: BTreeMap::new(),
         actions: Vec::new(),
         acks: Vec::new(),
@@ -120,7 +120,7 @@ fn peer(wire: Wire) -> Peer {
         width: 800,
     }
 }
-/// Bind a SEQPACKET listener for the sealed image endpoint.
+/// Bind a SEQPACKET listener for the owned-ring image endpoint.
 fn seqpacket_listener(path: &std::path::Path) -> std::os::fd::OwnedFd {
     use std::os::fd::FromRawFd;
     let c_path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
@@ -201,7 +201,7 @@ fn discovery_text(endpoint: &str) -> Vec<u8> {
         connection_epoch: EPOCH,
         channel_generation: 3,
         endpoint: endpoint.to_owned(),
-        source_kinds: 1,
+        source_kinds: 4,
         max_offers: 4,
         max_packets_per_turn: 1,
         hello_timeout_ms: 250,
@@ -239,7 +239,7 @@ fn image_limits_record() -> Vec<u8> {
     }
     .encode()
     .unwrap();
-    encode_shell_file_record_at_revision(object_header(ShellFileKind::ImageLimits), &body, 9)
+    encode_shell_file_record_at_revision(object_header(ShellFileKind::ImageLimits), &body, 10)
         .unwrap()
 }
 
@@ -252,7 +252,7 @@ fn image_formats_record() -> Vec<u8> {
     }
     .encode()
     .unwrap();
-    encode_shell_file_record_at_revision(object_header(ShellFileKind::ImageFormats), &body, 9)
+    encode_shell_file_record_at_revision(object_header(ShellFileKind::ImageFormats), &body, 10)
         .unwrap()
 }
 
@@ -304,8 +304,8 @@ pub fn pair_with_width(width: u32) -> (DockService<Raster>, Peer) {
     let connection = ShellConnection::connect_files(
         &path,
         ShellClientOptions {
-            minimum_revision: 9,
-            maximum_revision: 9,
+            minimum_revision: 10,
+            maximum_revision: 10,
             required_capabilities: CAPABILITIES,
             handshake_timeout: Duration::from_secs(2),
         },
@@ -348,7 +348,7 @@ pub fn pair_with_width(width: u32) -> (DockService<Raster>, Peer) {
     )
 }
 impl Peer {
-    /// Every sealed image the dock offered, as the SDK decoded it.
+    /// Every ring image the dock offered, as the peer verified it.
     pub fn declared_begins(&self) -> Vec<ShellImageMetadata> {
         self.resources.values().map(|(begin, _)| *begin).collect()
     }
@@ -490,7 +490,7 @@ impl Peer {
             let kind = decode_shell_file_record_at_revision(
                 &submission.bytes,
                 ShellFileClass::Candidate,
-                9,
+                10,
             )
             .unwrap()
             .header
@@ -505,8 +505,9 @@ impl Peer {
         self.image_pump();
     }
 
-    /// Drive the sealed endpoint: Hello, ChannelReady, ImageAdmitted,
-    /// then verify each Source descriptor before Accepted + Settled 1.
+    /// Drive the owned-ring endpoint: Hello, ChannelReady(4),
+    /// Register -> RingAdmitted, D4F1 + fd -> RingReady, then verify
+    /// each offered slot before Accepted + SlotReleased.
     fn image_pump(&mut self) {
         use std::os::fd::{AsRawFd, FromRawFd};
         if self.image_socket.is_none()
@@ -535,7 +536,7 @@ impl Peer {
                 self.hello_seen = true;
                 let body = ShellChannelReady {
                     channel_generation: 3,
-                    granted_source_kinds: 1,
+                    granted_source_kinds: 4,
                 }
                 .encode()
                 .unwrap();
@@ -554,79 +555,163 @@ impl Peer {
             self.wire.event_image(ShellFileKind::ChannelClosed, &body);
             return;
         }
-        if let Some(entry) = self.admit_queue.iter_mut().find(|(_, _, sent)| !sent) {
-            entry.2 = true;
-            let body = entry.1.encode().unwrap();
-            self.wire.event_image(ShellFileKind::ImageAdmitted, &body);
-        }
-        let Some((packet, fds)) = recv_packet(raw) else {
-            return;
-        };
-        assert_eq!(packet.len(), 200, "Source packet size");
-        assert_eq!(fds.len(), 1, "Source carries exactly one descriptor");
-        let ShellImagePacket::Source { metadata, .. } = ShellImagePacket::decode(&packet).unwrap()
-        else {
-            panic!("expected Source packet");
-        };
-        let (tx, admitted) = self
-            .admit_queue
-            .iter()
-            .find(|(_, m, _)| m.offer_id == metadata.offer_id)
-            .map(|(tx, m, _)| (*tx, *m))
-            .expect("Source names an admitted offer");
-        assert_eq!(admitted, metadata);
-        let mut bytes = vec![0u8; metadata.declared_bytes as usize];
-        let read = unsafe {
-            libc::pread(
-                fds[0].as_raw_fd(),
-                bytes.as_mut_ptr() as *mut libc::c_void,
-                bytes.len(),
-                0,
-            )
-        };
-        assert_eq!(read as usize, bytes.len(), "sealed bytes readable");
-        assert_eq!(
-            &bytes[..4],
-            &[25, 50, 100, 128],
-            "wire premultiplied BGRA in sealed source"
-        );
-        assert!(
-            self.resources
-                .insert(
-                    (metadata.resource, metadata.resource_generation),
-                    (metadata, bytes)
-                )
-                .is_none()
-        );
-        self.admit_queue
-            .retain(|(_, m, _)| m.offer_id != metadata.offer_id);
-        // The status transaction names the offer, per the image
-        // channel's status-routing rule.
-        self.send(
-            TransactionId::from_raw(metadata.offer_id),
-            ShellContentRecord::ResourceStatus(ContentResourceStatus {
-                grant: grant(),
-                resource: ContentResourceId {
-                    id: metadata.resource,
-                    generation: metadata.resource_generation,
-                },
-                status: 2,
-                reason: 0,
-                next_ordinal: 0,
-                admitted_bytes: metadata.declared_bytes,
-            }),
-        );
-        let _ = tx;
-        if !self.hold_image_settle {
-            let body = ShellSourceReleased {
-                offer_id: metadata.offer_id,
-                resource: metadata.resource,
-                resource_generation: metadata.resource_generation,
-                disposition: ShellSourceDisposition::Retained,
+        while let Some(bytes) = self.wire.ring_writes.pop_front() {
+            match RingControl::decode(&bytes).unwrap() {
+                RingControl::Register(registration) => {
+                    assert!(self.ring.is_none(), "one ring registration");
+                    let sequence = self.wire.next_sequence();
+                    let event = RingEvent {
+                        kind: RingEventKind::RingAdmitted,
+                        identity: registration.identity,
+                        sequence,
+                        offer_id: 0,
+                        slot: 0,
+                        slot_generation: 0,
+                        resource: 0,
+                        resource_generation: 0,
+                        reason: 0,
+                        changed_generation: false,
+                    };
+                    self.wire.event_raw(&event.encode());
+                    self.pending_ring = Some(registration);
+                }
+                RingControl::Offer(offer) => {
+                    use std::os::fd::AsFd;
+                    self.begins += 1;
+                    let (identity, capacity, fd) = {
+                        let (identity, capacity, fd) =
+                            self.ring.as_ref().expect("offer before RingReady");
+                        (*identity, *capacity, fd.as_fd().as_raw_fd())
+                    };
+                    assert_eq!(offer.identity, identity);
+                    let extent = 4096 + ((capacity + 4095) & !4095);
+                    let base = u64::from(offer.slot) * extent;
+                    let mut word = [0u8; 8];
+                    let read = unsafe {
+                        libc::pread(
+                            fd,
+                            word.as_mut_ptr() as *mut libc::c_void,
+                            8,
+                            base as libc::off_t,
+                        )
+                    };
+                    assert_eq!(read, 8, "slot generation readable");
+                    assert_eq!(
+                        u64::from_le_bytes(word),
+                        offer.slot_generation,
+                        "slot generation word precedes the offer"
+                    );
+                    let declared = u64::from(offer.width) * u64::from(offer.height) * 4;
+                    let mut bytes = vec![0u8; declared as usize];
+                    let read = unsafe {
+                        libc::pread(
+                            fd,
+                            bytes.as_mut_ptr() as *mut libc::c_void,
+                            bytes.len(),
+                            (base + 4096) as libc::off_t,
+                        )
+                    };
+                    assert_eq!(read as usize, bytes.len(), "ring pixels readable");
+                    assert_eq!(
+                        &bytes[..4],
+                        &[25, 50, 100, 128],
+                        "wire premultiplied BGRA in ring slot"
+                    );
+                    let metadata = ShellImageMetadata {
+                        offer_id: offer.offer_id,
+                        resource: offer.resource,
+                        resource_generation: offer.resource_generation,
+                        admission_epoch: grant().content_grant_epoch,
+                        output_id: offer.output,
+                        allocation_id: offer.allocation,
+                        topology_generation: offer.topology_generation,
+                        source_kind: 4,
+                        source_format: 1,
+                        width: offer.width,
+                        height: offer.height,
+                        stride: offer.width * 4,
+                        plane_count: 1,
+                        descriptor_count: 1,
+                        declared_bytes: declared,
+                        modifier: 0,
+                    };
+                    assert!(
+                        self.resources
+                            .insert(
+                                (metadata.resource, metadata.resource_generation),
+                                (metadata, bytes)
+                            )
+                            .is_none()
+                    );
+                    // The status transaction names the offer, per the
+                    // image channel's status-routing rule.
+                    self.send(
+                        TransactionId::from_raw(offer.offer_id),
+                        ShellContentRecord::ResourceStatus(ContentResourceStatus {
+                            grant: grant(),
+                            resource: ContentResourceId {
+                                id: offer.resource,
+                                generation: offer.resource_generation,
+                            },
+                            status: 2,
+                            reason: 0,
+                            next_ordinal: 0,
+                            admitted_bytes: declared,
+                        }),
+                    );
+                    if !self.hold_image_settle {
+                        let sequence = self.wire.next_sequence();
+                        let event = RingEvent {
+                            kind: RingEventKind::SlotReleased,
+                            identity,
+                            sequence,
+                            offer_id: offer.offer_id,
+                            slot: offer.slot,
+                            slot_generation: offer.slot_generation,
+                            resource: offer.resource,
+                            resource_generation: offer.resource_generation,
+                            reason: 0,
+                            changed_generation: false,
+                        };
+                        self.wire.event_raw(&event.encode());
+                    }
+                }
             }
-            .encode()
-            .unwrap();
-            self.wire.event_image(ShellFileKind::SourceReleased, &body);
+        }
+        if self.ring.is_none()
+            && let Some((packet, fds)) = recv_packet(raw)
+        {
+            assert_eq!(packet.len(), 72, "ring source packet size");
+            assert_eq!(fds.len(), 1, "ring source carries exactly one descriptor");
+            let registration = self.pending_ring.take().expect("source before Register");
+            let mut fds = fds;
+            let source_fd = fds.remove(0);
+            let size = unsafe {
+                let mut stat: libc::stat = std::mem::zeroed();
+                assert_eq!(libc::fstat(source_fd.as_raw_fd(), &mut stat), 0);
+                stat.st_size
+            };
+            let extent = 4096 + ((registration.capacity + 4095) & !4095);
+            assert_eq!(
+                size,
+                i64::from(registration.slots) * extent as i64,
+                "ring source size is slots times slot extent"
+            );
+            let sequence = self.wire.next_sequence();
+            let event = RingEvent {
+                kind: RingEventKind::RingReady,
+                identity: registration.identity,
+                sequence,
+                offer_id: 0,
+                slot: 0,
+                slot_generation: 0,
+                resource: 0,
+                resource_generation: 0,
+                reason: 0,
+                changed_generation: false,
+            };
+            self.wire.event_raw(&event.encode());
+            self.ring = Some((registration.identity, registration.capacity, source_fd));
         }
     }
     fn submission(&mut self, kind: ShellFileKind, submission: &Submission) {
@@ -640,11 +725,11 @@ impl Peer {
                         hello.maximum_revision,
                         hello.required_capabilities
                     ),
-                    (9, 9, CAPABILITIES)
+                    (10, 10, CAPABILITIES)
                 );
                 let body = encode_shell_file_negotiated_body(ShellFileNegotiated {
                     welcome: ShellV1ServerWelcome {
-                        selected_revision: 9,
+                        selected_revision: 10,
                         connection_epoch: EPOCH,
                         capabilities: CAPABILITIES,
                         max_descriptors: 16,
@@ -659,26 +744,6 @@ impl Peer {
             }
             ShellFileKind::AllocationRequest => {
                 decode_shell_file_allocation_request(bytes).unwrap()
-            }
-            ShellFileKind::ImageBegin => {
-                let record =
-                    decode_shell_file_record_at_revision(bytes, ShellFileClass::Candidate, 9)
-                        .unwrap();
-                let mut metadata = ShellImageMetadata::decode(record.body).unwrap();
-                assert_eq!(
-                    metadata.admission_epoch,
-                    grant().content_grant_epoch,
-                    "admission epoch must name the content grant, not the connection"
-                );
-                self.begins += 1;
-                self.next_offer += 1;
-                metadata.offer_id = self.next_offer;
-                self.admit_queue.push((
-                    TransactionId::from_raw(record.header.submission_id),
-                    metadata,
-                    false,
-                ));
-                return;
             }
             ShellFileKind::ResourceRetire => decode_shell_file_resource_retire(bytes).unwrap(),
             ShellFileKind::FrameDemand | ShellFileKind::ActionAck => {

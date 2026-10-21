@@ -204,22 +204,22 @@ fn unsettled_image_times_out_without_declaring_the_resource_resident() {
     );
 }
 
-/// Every image crosses as one sealed ISB offer: exact tight BGRA
+/// Every image crosses as one ring offer: exact tight BGRA
 /// geometry, one plane and one descriptor, at several widths. The
-/// peer verifies the sealed bytes before Accepted + Settled 1.
+/// peer verifies the slot bytes before Accepted + SlotReleased.
 #[test]
-fn sealed_images_declare_exact_geometry_at_widths() {
+fn ring_images_declare_exact_geometry_at_widths() {
     for width in [800, 4093, 8187] {
         let (mut service, mut peer) = pair_with_width(width);
         drive(&mut service, &mut peer, |p| p.presented.len() == 2);
         let begins = peer.declared_begins();
-        assert_eq!(begins.len(), 2, "one sealed image per output");
+        assert_eq!(begins.len(), 2, "one ring image per output");
         for begin in begins {
             assert_eq!(begin.width, width);
             assert_eq!(begin.height, 64);
             assert_eq!(begin.stride, width * 4);
             assert_eq!(begin.declared_bytes, u64::from(width) * 64 * 4);
-            assert_eq!((begin.source_kind, begin.source_format), (1, 1));
+            assert_eq!((begin.source_kind, begin.source_format), (4, 1));
             assert_eq!((begin.plane_count, begin.descriptor_count), (1, 1));
         }
     }

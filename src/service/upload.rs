@@ -16,9 +16,6 @@ pub(super) struct Pending {
     pub slot: usize,
     pub view: ViewMetadata,
     pub bytes: Vec<u8>,
-    /// The sealed source, retained only while `image_begin` refuses
-    /// it with Busy; the producer owns it after admission.
-    pub source: Option<std::os::fd::OwnedFd>,
     pub offer: Option<u64>,
     pub accepted: bool,
     pub demand_tx: TransactionId,
@@ -65,7 +62,6 @@ impl<R: RasterExecutor> DockService<R> {
             slot: rendering.slot,
             view: rendering.view,
             bytes: result.bytes,
-            source: None,
             offer: None,
             accepted: false,
             demand_tx: TransactionId::from_raw(0),
@@ -96,16 +92,16 @@ impl<R: RasterExecutor> DockService<R> {
         let mut resource = self.outputs[index].slots[slot].resource;
         match phase {
             Phase::Begin => {
-                // No image moves before the sealed channel is Ready;
-                // a closed channel is an explicit session failure,
-                // never a byte-upload fallback.
+                // No image moves before the owned-ring channel is
+                // Ready; a closed channel is an explicit session
+                // failure, never a sealed or byte-upload fallback.
                 let Some(adapter) = self.connection.image_adapter() else {
-                    return Err("sealed image channel was not enabled".into());
+                    return Err("owned-ring image channel was not enabled".into());
                 };
                 match adapter.channel() {
                     Some(sophia_shell_client::ImageChannelState::Ready) => {}
                     Some(sophia_shell_client::ImageChannelState::Closed) => {
-                        return Err("sealed image channel closed before Source".into());
+                        return Err("owned-ring image channel closed before Ready".into());
                     }
                     _ => return Ok(()),
                 }
@@ -117,63 +113,40 @@ impl<R: RasterExecutor> DockService<R> {
                     .resource
                     .checked_add(1)
                     .ok_or("resource IDs exhausted")?;
-                let pending = self.outputs[index].pending.as_mut().unwrap();
-                if pending.source.is_none() {
-                    let width = allocation.pixel.width;
-                    let height = allocation.pixel.height;
-                    let isb = sophia_image_producer::create_isb(width, height)
-                        .map_err(|e| format!("sealed source create: {e:?}"))?;
-                    isb.write_pixels(0, &pending.bytes)
-                        .map_err(|e| format!("sealed source fill: {e:?}"))?;
-                    sophia_image_producer::finish_isb(&isb)
-                        .map_err(|e| format!("sealed source seal: {e:?}"))?;
-                    pending.source = Some(isb.into_fd());
-                }
-                let source = pending.source.take().unwrap();
-                let metadata = sophia_shell_client::ProducerMetadata {
-                    offer_id: 0,
+                let upload = sophia_shell_client::RingUpload {
                     resource: resource.id,
                     resource_generation: resource.generation,
-                    admission_epoch: limits.grant.content_grant_epoch,
-                    output_id: allocation.output.id,
-                    allocation_id: allocation.allocation.id,
+                    allocation: allocation.allocation.id,
+                    allocation_generation: allocation.allocation.generation,
+                    output: allocation.output.id,
+                    output_generation: allocation.output.generation,
                     topology_generation: self.facts.as_ref().expect("facts").facts_generation,
-                    source_kind: 1,
-                    source_format: 1,
                     width: allocation.pixel.width,
                     height: allocation.pixel.height,
-                    stride: allocation.pixel.width * 4,
-                    plane_count: 1,
-                    descriptor_count: 1,
-                    declared_bytes: pending.bytes.len() as u64,
-                    modifier: 0,
                 };
+                let bytes = &self.outputs[index].pending.as_ref().unwrap().bytes;
                 match self
                     .connection
-                    .image_begin(metadata, source, Instant::now())
+                    .image_upload_ring(upload, bytes, Instant::now())
                 {
-                    Ok(admission) => {
-                        self.custody.record_ticket(admission.ticket);
+                    Ok(offer) => {
                         if first {
                             self.resource = next;
                         }
                         self.outputs[index].slots[slot].resource = resource;
                         let pending = self.outputs[index].pending.as_mut().unwrap();
-                        pending.offer = Some(admission.offer);
+                        pending.offer = Some(offer);
                         pending.phase = Phase::WaitImage;
                         pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
                     }
                     Err(error) => {
                         use sophia_shell_client::ImageAdapterError;
-                        if matches!(
-                            error.error,
-                            ImageAdapterError::Busy | ImageAdapterError::Again
-                        ) {
-                            // The descriptor came back; retry next turn.
-                            self.outputs[index].pending.as_mut().unwrap().source = error.source;
+                        if matches!(error, ImageAdapterError::Busy | ImageAdapterError::Again) {
+                            // A ring slot or control write is busy; the
+                            // pixels wait in the pending upload.
                             return Ok(());
                         }
-                        return Err(format!("sealed image begin refused: {:?}", error.error));
+                        return Err(format!("owned-ring image upload refused: {error:?}"));
                     }
                 }
             }
@@ -182,20 +155,16 @@ impl<R: RasterExecutor> DockService<R> {
                 let offer = pending.offer.ok_or("image offer was not recorded")?;
                 let info = self
                     .connection
-                    .image_adapter()
-                    .and_then(|adapter| adapter.offer(offer))
+                    .image_ring_offer(offer)
                     .ok_or("image offer vanished before settlement")?;
-                use sophia_shell_client::OfferState;
+                use sophia_shell_client::RingOfferState;
                 match info.state {
-                    OfferState::Settled => {
+                    RingOfferState::Settled => {
                         if !pending.accepted
                             || info.status
                                 != Some(sophia_image_producer::ResourceStatusKind::Accepted)
-                            || info.disposition != 1
                         {
-                            return Err(
-                                "image settled without Accepted and Settled disposition 1".into()
-                            );
+                            return Err("image settled without an Accepted status".into());
                         }
                         self.connection
                             .image_forget(offer)
@@ -206,16 +175,13 @@ impl<R: RasterExecutor> DockService<R> {
                         pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
                         self.outputs[index].slots[slot].state = ResourceState::Resident;
                     }
-                    OfferState::Refused
-                    | OfferState::Ambiguous
-                    | OfferState::Expired
-                    | OfferState::Unknown => {
+                    RingOfferState::Refused | RingOfferState::Unknown => {
                         return Err(format!(
                             "image offer ended in {:?} before settlement",
                             info.state
                         ));
                     }
-                    _ => {}
+                    RingOfferState::Pending => {}
                 }
             }
             Phase::Demand => {

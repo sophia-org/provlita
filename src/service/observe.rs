@@ -47,8 +47,8 @@ impl<R: RasterExecutor> DockService<R> {
                 Some(ContentLifecycle::new(limits.clone()).map_err(|e| format!("limits: {e:?}"))?);
             self.limits = Some(limits.clone());
             // Image admission is mandatory on this client: enable the
-            // sealed channel from the negotiated limits, or fail the
-            // session. There is no byte-upload fallback.
+            // owned-ring channel from the negotiated limits, or fail
+            // the session. There is no sealed or byte-upload fallback.
             let origin = Instant::now();
             let origin_ms = monotonic_ms()?;
             let image = ShellImageConfig {
@@ -63,10 +63,13 @@ impl<R: RasterExecutor> DockService<R> {
                 transfer_timeout_ms: limits.transfer_timeout_ms,
                 startup_deadline_ms: origin_ms + u64::from(limits.transfer_timeout_ms),
                 formats_capacity: 4096,
+                ring_slots: 0,
+                ring_capacity: 0,
+                content_grant_epoch: limits.grant.content_grant_epoch,
             };
             self.connection
                 .enable_image(image, origin, origin_ms)
-                .map_err(|e| format!("sealed image channel is required: {e}"))?;
+                .map_err(|e| format!("owned-ring image channel is required: {e}"))?;
             return Ok(0);
         }
         let dispatch = self
@@ -153,11 +156,10 @@ impl<R: RasterExecutor> DockService<R> {
                 }
                 // The producer routed this status to the offer by exact
                 // resource identity before delivery; confirm it accepted.
-                let offer = pending.offer.ok_or("image status before ImageBegin")?;
+                let offer = pending.offer.ok_or("image status before ring offer")?;
                 let info = self
                     .connection
-                    .image_adapter()
-                    .and_then(|adapter| adapter.offer(offer))
+                    .image_ring_offer(offer)
                     .ok_or("image status names no live offer")?;
                 if info.status != Some(sophia_image_producer::ResourceStatusKind::Accepted) {
                     return Err("image resource was not accepted".into());

@@ -40,6 +40,8 @@ pub struct Wire {
     accepted: u64,
     acked: u64,
     pub submissions: VecDeque<Submission>,
+    /// Complete writes to the `owned-ring-v1` control file, in order.
+    pub ring_writes: VecDeque<Vec<u8>>,
     pub uploads: HashMap<String, Vec<u8>>,
     pub short_writes: usize,
     closed: bool,
@@ -61,6 +63,7 @@ impl Wire {
             accepted: 0,
             acked: 0,
             submissions: VecDeque::new(),
+            ring_writes: VecDeque::new(),
             uploads: HashMap::new(),
             short_writes: 0,
             closed: false,
@@ -97,8 +100,8 @@ impl Wire {
         );
     }
 
-    /// One r9 image-channel event (ChannelReady, ImageAdmitted,
-    /// SourceReleased); the r8 envelope refuses these kinds.
+    /// One r10 image-channel event (ChannelReady or ChannelClosed);
+    /// the r8 envelope refuses these kinds.
     pub fn event_image(&mut self, kind: ShellFileKind, body: &[u8]) {
         self.sequence += 1;
         self.events.extend(
@@ -110,10 +113,21 @@ impl Wire {
                     sequence: self.sequence,
                 },
                 body,
-                9,
+                10,
             )
             .unwrap(),
         );
+    }
+
+    /// Queue one raw D4E1 ring event; its sequence is the journal
+    /// sequence allocated by [`next_sequence`](Self::next_sequence).
+    pub fn event_raw(&mut self, bytes: &[u8]) {
+        self.events.extend(bytes);
+    }
+
+    pub fn next_sequence(&mut self) -> u64 {
+        self.sequence += 1;
+        self.sequence
     }
 
     pub fn accept(&mut self, submission: &Submission, kind: ShellFileKind) {
@@ -122,7 +136,7 @@ impl Wire {
                 submission_id: submission.id,
                 candidate_kind: kind,
             },
-            9,
+            10,
         )
         .unwrap();
         self.event(ShellFileKind::Submitted, &body);
@@ -276,7 +290,7 @@ impl Wire {
                         let header = decode_shell_file_record_at_revision(
                             &self.transaction,
                             ShellFileClass::Candidate,
-                            9,
+                            10,
                         )
                         .unwrap()
                         .header;
@@ -295,6 +309,10 @@ impl Wire {
                         assert_eq!(ack.connection_epoch, EPOCH);
                         assert!(ack.sequence >= self.acked && ack.sequence <= self.sequence);
                         self.acked = ack.sequence;
+                        self.write_reply(tag, count);
+                    }
+                    "owned-ring-v1" => {
+                        self.ring_writes.push_back(bytes.to_vec());
                         self.write_reply(tag, count);
                     }
                     _ if name.starts_with("upload/") => {

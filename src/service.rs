@@ -148,8 +148,8 @@ impl<R: RasterExecutor> DockService<R> {
         renderer: R,
         endpoint_dir: PathBuf,
     ) -> Result<Self, String> {
-        if connection.welcome().selected_revision != 9 || allowance == 0 {
-            return Err("dock requires revision 9 and an explicit edge allowance".into());
+        if connection.welcome().selected_revision != 10 || allowance == 0 {
+            return Err("dock requires revision 10 and an explicit edge allowance".into());
         }
         let inbox = CatalogInbox::new(connection.connection_epoch()).map_err(|e| e.to_string())?;
         Ok(Self {

@@ -48,8 +48,8 @@ pub fn run() -> Result<(), String> {
     if let Some(signal) = stop.requested() {
         return stopped(signal, "configuration", "none", StopReport::default(), None);
     }
-    // The ISB migration requires the sealed image capability at r9;
-    // there is no byte-upload fallback. The endpoint directory is the
+    // The owned ring requires r10 and its capability; there is no
+    // sealed or byte-upload fallback. The endpoint directory is the
     // parent of the exact role socket path, per the image contract.
     let endpoint_dir = std::path::PathBuf::from(&socket)
         .parent()
@@ -58,14 +58,14 @@ pub fn run() -> Result<(), String> {
     let connected = crate::authentication::connect(
         socket,
         ShellClientOptions {
-            minimum_revision: 9,
-            maximum_revision: 9,
+            minimum_revision: 10,
+            maximum_revision: 10,
             required_capabilities: SOPHIA_SHELL_CAPABILITY_PERSISTENT_CATALOG
                 | SOPHIA_SHELL_CAPABILITY_APPLICATION_CATALOG
                 | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
                 | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
                 | SOPHIA_SHELL_CAPABILITY_WORK_AREA_RESERVATION
-                | sophia_shell_client::IMAGE_CAPABILITY_SEALED,
+                | sophia_shell_client::IMAGE_CAPABILITY_OWNED_RING,
             handshake_timeout: Duration::from_secs(2),
         },
         || stop.requested().is_some(),
