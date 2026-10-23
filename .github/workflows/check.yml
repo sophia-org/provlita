@@ -12,6 +12,6 @@ jobs:
       - name: Install Linux text-stack build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y pkg-config libfontconfig1-dev
+          sudo apt-get install --no-install-recommends -y pkg-config libfontconfig1-dev bubblewrap
       - name: Check
         run: sh tools/check.sh
