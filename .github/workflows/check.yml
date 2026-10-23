@@ -13,5 +13,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y pkg-config libfontconfig1-dev bubblewrap
+      - name: Let bwrap, and only bwrap, create user namespaces
+        # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor.
+        # Load AppArmor's packaged bwrap-userns-restrict profile: bwrap may set
+        # up its namespaces; everything it executes is denied capabilities.
+        run: |
+          sudo apt-get install --no-install-recommends -y apparmor-profiles
+          sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
       - name: Check
         run: sh tools/check.sh
