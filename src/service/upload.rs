@@ -25,6 +25,33 @@ pub(super) struct Pending {
     pub candidate: u64,
     pub phase: Phase,
     pub deadline: Instant,
+    /// The candidate places pixels already resident; no upload preceded it.
+    pub reused: bool,
+}
+impl Pending {
+    pub(super) fn new(slot: usize, view: ViewMetadata, bytes: Vec<u8>, phase: Phase) -> Self {
+        Self {
+            slot,
+            view,
+            reused: bytes.is_empty(),
+            bytes,
+            offer: None,
+            accepted: false,
+            demand_tx: TransactionId::from_raw(0),
+            candidate_tx: TransactionId::from_raw(0),
+            demand: 0,
+            permit: None,
+            candidate: 0,
+            phase,
+            deadline: Instant::now() + RESPONSE_TIMEOUT,
+        }
+    }
+    /// Pacing permit expiry, once one is held.
+    pub(super) fn permit_deadline(&self) -> Option<Instant> {
+        self.permit
+            .as_ref()
+            .map(|(permit, received)| *received + Duration::from_millis(u64::from(permit.ttl_ms)))
+    }
 }
 impl<R: RasterExecutor> DockService<R> {
     pub(super) fn finish_render(
@@ -58,20 +85,12 @@ impl<R: RasterExecutor> DockService<R> {
             pixel[1] = pm(pixel[1]);
             pixel[2] = r;
         }
-        self.outputs[rendering.output].pending = Some(Pending {
-            slot: rendering.slot,
-            view: rendering.view,
-            bytes: result.bytes,
-            offer: None,
-            accepted: false,
-            demand_tx: TransactionId::from_raw(0),
-            candidate_tx: TransactionId::from_raw(0),
-            demand: 0,
-            permit: None,
-            candidate: 0,
-            phase: Phase::Begin,
-            deadline: Instant::now() + RESPONSE_TIMEOUT,
-        });
+        self.outputs[rendering.output].pending = Some(Pending::new(
+            rendering.slot,
+            rendering.view,
+            result.bytes,
+            Phase::Begin,
+        ));
         Ok(())
     }
     pub(super) fn advance(&mut self, index: usize) -> Result<(), String> {
@@ -130,6 +149,9 @@ impl<R: RasterExecutor> DockService<R> {
                     .image_upload_ring(upload, bytes, Instant::now())
                 {
                     Ok(offer) => {
+                        self.stats.count(|s| &mut s.uploads, 1);
+                        self.stats
+                            .count(|s| &mut s.upload_bytes, bytes.len() as u64);
                         if first {
                             self.resource = next;
                         }
@@ -174,6 +196,8 @@ impl<R: RasterExecutor> DockService<R> {
                         pending.phase = Phase::Demand;
                         pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
                         self.outputs[index].slots[slot].state = ResourceState::Resident;
+                        // The demand is enqueued by the next turn's advance.
+                        self.progress = true;
                     }
                     RingOfferState::Refused | RingOfferState::Unknown => {
                         return Err(format!(
@@ -309,6 +333,8 @@ impl<R: RasterExecutor> DockService<R> {
         }
         self.candidate = next;
         let pending = self.outputs[index].pending.as_mut().unwrap();
+        self.stats
+            .count(|s| &mut s.raster_reuses, u64::from(pending.reused));
         pending.candidate = candidate;
         pending.candidate_tx = tx;
         pending.phase = Phase::WaitCandidate;

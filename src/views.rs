@@ -54,6 +54,20 @@ pub struct ViewTarget {
     pub rect: ContentPixelRect,
     widget: WidgetId,
 }
+/// Everything `dock_view` paints, as exact semantic keys. Under one
+/// `ViewIdentity` (hence one host, width, height and scale) equal keys produce
+/// equal pixels; any difference, or any unknown, means render. Colors, padding
+/// and fonts are compile-time constants of the view, so a changed style is a
+/// new binary, never a silent equality.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VisibleKey {
+    /// Per configured pin: label, icon and whether the catalog made it available.
+    pub tiles: Vec<(String, String, bool)>,
+    /// Configured tile edge in logical pixels.
+    pub tile_size: u16,
+    /// Configured gap between tiles in logical pixels.
+    pub spacing: u16,
+}
 /// Lease-free origin carried with the GPU job and eventual candidate.
 #[derive(Clone, Debug)]
 pub struct ViewMetadata {
@@ -63,6 +77,14 @@ pub struct ViewMetadata {
     pub catalog_generation: u64,
     /// Same-scene available targets; unavailable tiles have no target.
     pub targets: Vec<ViewTarget>,
+    /// What the scene paints; compared before reusing resident pixels.
+    pub visible: VisibleKey,
+}
+impl ViewMetadata {
+    /// Whether a candidate for `next` may place the pixels rendered for `self`.
+    pub fn same_pixels(&self, next: &ViewMetadata) -> bool {
+        self.identity == next.identity && self.visible == next.visible
+    }
 }
 /// Scene plus its immutable same-layout metadata; no protocol admission implied.
 pub struct PreparedView {
@@ -204,12 +226,24 @@ impl DockViews {
                 },
             });
         }
+        let visible = VisibleKey {
+            tiles: host
+                .ui
+                .state()
+                .tiles()
+                .iter()
+                .map(|tile| (tile.label.clone(), tile.icon.clone(), tile.slot.is_some()))
+                .collect(),
+            tile_size: self.config.tile_size,
+            spacing: self.config.spacing,
+        };
         Ok(PreparedView {
             scene: Box::new(scene),
             metadata: ViewMetadata {
                 identity,
                 catalog_generation: host.catalog_generation,
                 targets,
+                visible,
             },
         })
     }

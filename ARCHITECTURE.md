@@ -73,7 +73,16 @@ Vello renders to an offscreen GPU target. The existing supported path performs
 bounded readback followed by content upload over the 9P shell file contract: it is GPU-rendered,
 not zero-copy. Treat upload and actual native presentation as separate facts.
 Use bounded GPU jobs/readback waits and per-output dirty scheduling. Unchanged
-outputs do not submit. Keep pending presentation, input binding and resource
+outputs do not submit. A catalog change that leaves an output's painted tiles
+identical (same label, icon and availability per pin under the same allocation
+and scale) is presented again from the resident resource through a fresh demand,
+permit and candidate; nothing renders, uploads or retires. Any other difference
+renders. Owner loops never sleep a fixed interval: the serve, admission and join
+loops wait on the session and image sockets, the GPU worker's completion
+counter and the stop request's counter, bounded by the earliest SDK, GPU,
+response, permit, retirement or action deadline. `SOPHIA_SHELL_WORK_STATS=1`
+prints the cumulative `sophia_shell_work_stats` record every five seconds and
+once more at shutdown (`final=1`); it is off by default and counts nothing when off. Keep pending presentation, input binding and resource
 release independent, with aggregate byte/record/slot limits and held-consumer
 progress. Direct device access does not imply a hard aggregate VRAM quota; retain
 that limitation rather than claiming one-job scheduling enforces it.

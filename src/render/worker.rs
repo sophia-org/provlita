@@ -2,12 +2,24 @@
 use super::{DockRenderer, GpuAdmissionEvidence, GpuGrant};
 use crate::ui::DockScene;
 use std::{
-    sync::mpsc::{self, Receiver, SyncSender, TryRecvError},
+    os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd},
+    sync::{
+        Arc,
+        mpsc::{self, Receiver, SyncSender, TryRecvError},
+    },
     thread::JoinHandle,
     time::{Duration, Instant},
 };
 
 const DEADLINE: Duration = Duration::from_secs(2);
+
+/// Signals the owner's wake counter when dropped, after every other local.
+struct WakeOnDrop(Arc<OwnedFd>);
+impl Drop for WakeOnDrop {
+    fn drop(&mut self) {
+        crate::wait::signal(self.0.as_raw_fd());
+    }
+}
 
 /// Opaque checked service job identity, separate from candidate/native epochs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,6 +56,8 @@ pub struct GpuWorker {
     pending: Option<(RenderJobId, Instant)>,
     high_water: u64,
     failed: bool,
+    /// Readable after admission, each completion and thread exit.
+    wake: Arc<OwnedFd>,
 }
 impl GpuWorker {
     /// Start explicit GPU admission; no device work happens on the caller.
@@ -62,14 +76,23 @@ impl GpuWorker {
         let (requests, incoming) = mpsc::sync_channel::<Job>(1);
         let (ready, readiness) = mpsc::sync_channel(1);
         let (results, completed) = mpsc::sync_channel(1);
+        let wake = Arc::new(crate::wait::eventfd()?);
+        let exit = WakeOnDrop(wake.clone());
         let thread = std::thread::Builder::new()
             .name("provlita-gpu".into())
             .spawn(move || {
+                // Declared first so it drops last: the exit wake follows the
+                // rasterizer's own teardown.
+                let exit = exit;
+                // Bound the senders after `exit` so they drop (disconnecting
+                // the owner's receivers) before the exit wake, on unwind too.
+                let (ready, results) = (ready, results);
                 let mut raster = match factory() {
                     Ok((raster, evidence)) => {
                         if ready.send(Ok(evidence)).is_err() {
                             return;
                         }
+                        crate::wait::signal(exit.0.as_raw_fd());
                         raster
                     }
                     Err(error) => {
@@ -94,6 +117,7 @@ impl GpuWorker {
                     if results.send(result).is_err() {
                         break;
                     }
+                    crate::wait::signal(exit.0.as_raw_fd());
                     if failed {
                         // Keep the failed rasterizer (including a timed-out
                         // readback's real resources) quarantined until explicit
@@ -114,7 +138,24 @@ impl GpuWorker {
             pending: None,
             high_water: 0,
             failed: false,
+            wake,
         })
+    }
+    /// Readable when admission, a completion or thread exit awaits a poll.
+    /// `poll_ready` and `poll` clear it before draining; `poll_shutdown` never
+    /// does, so a join wait returns until the thread is observed finished.
+    pub fn wake_fd(&self) -> BorrowedFd<'_> {
+        self.wake.as_fd()
+    }
+    /// Earliest instant at which a poll reports a deadline failure.
+    pub fn wake_deadline(&self) -> Option<Instant> {
+        if self.failed {
+            return None;
+        }
+        if !self.admitted {
+            return Some(self.started + DEADLINE);
+        }
+        self.pending.map(|(_, started)| started + DEADLINE)
     }
     /// Poll exact startup evidence once. Deadline refusal stays sticky.
     pub fn poll_ready(&mut self) -> Result<Option<GpuAdmissionEvidence>, String> {
@@ -124,6 +165,7 @@ impl GpuWorker {
         if self.admitted {
             return Ok(None);
         }
+        crate::wait::clear(self.wake.as_fd());
         if self.started.elapsed() >= DEADLINE {
             self.failed = true;
             return Err("GPU startup deadline expired".into());
@@ -177,8 +219,22 @@ impl GpuWorker {
         if self.failed {
             return Err("GPU worker is quarantined".into());
         }
+        // Clear before draining, also with no job: a completion or admission
+        // wake that landed after its message was consumed must not stay
+        // readable, and an unrequested exit must be observed.
+        crate::wait::clear(self.wake.as_fd());
         let Some((id, started)) = self.pending else {
-            return Ok(None);
+            return match self.results.try_recv() {
+                Err(TryRecvError::Empty) => Ok(None),
+                Err(TryRecvError::Disconnected) => {
+                    self.failed = true;
+                    Err("GPU worker exited without a shutdown request".into())
+                }
+                Ok(_) => {
+                    self.failed = true;
+                    Err("GPU completion without a pending job".into())
+                }
+            };
         };
         if started.elapsed() >= DEADLINE {
             self.failed = true;

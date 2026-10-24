@@ -180,3 +180,96 @@ fn shutdown_does_not_claim_pending_worker_has_exited() {
     wait(|| worker.poll_shutdown().unwrap());
     assert!(worker.pending.is_none());
 }
+
+fn readable(worker: &GpuWorker) -> bool {
+    crate::wait::Wait::new()
+        .readable(worker.wake_fd())
+        .until(Some(Instant::now()))
+        .block()
+        .unwrap()
+        == crate::wait::Wake::Ready
+}
+/// A rasterizer that reports when it starts a job, then waits for release.
+/// Once a job has started, the admission wake is certainly written, so the
+/// owner's next poll consumes it and the following wake is the job's own.
+fn gated(
+    outcome: impl Fn() -> Result<Vec<u8>, String> + Send + 'static,
+) -> (mpsc::Sender<()>, mpsc::Receiver<()>, GpuWorker) {
+    let (release, hold) = mpsc::channel();
+    let (started, running) = mpsc::channel();
+    let worker = GpuWorker::spawn(move || {
+        Ok((
+            Box::new(move |_| {
+                started.send(()).unwrap();
+                hold.recv_timeout(Duration::from_secs(1)).unwrap();
+                outcome()
+            }),
+            evidence(),
+        ))
+    })
+    .unwrap();
+    (release, running, worker)
+}
+fn job_started(worker: &mut GpuWorker, running: &mpsc::Receiver<()>) {
+    ready(worker);
+    assert!(worker.submit(RenderJobId(1), scene()).is_ok());
+    running.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(worker.poll().unwrap().is_none(), "job in flight");
+    assert!(!readable(worker), "admission wake consumed");
+}
+fn woken(worker: &GpuWorker) {
+    assert_eq!(
+        crate::wait::Wait::new()
+            .readable(worker.wake_fd())
+            .until(Some(Instant::now() + Duration::from_secs(1)))
+            .block()
+            .unwrap(),
+        crate::wait::Wake::Ready,
+        "wake within bound"
+    );
+}
+
+/// Admission and completion set the wake; the next poll clears it before
+/// draining, and a stale wake with no job in flight is consumed, not spun on.
+#[test]
+fn wakes_are_cleared_before_each_drain_and_a_stale_wake_does_not_persist() {
+    let (release, running, mut worker) = gated(|| Ok(vec![7; 32]));
+    job_started(&mut worker, &running);
+    release.send(()).unwrap();
+    woken(&worker);
+    assert!(worker.poll().unwrap().is_some());
+    assert!(!readable(&worker), "completion wake consumed");
+    crate::wait::signal(worker.wake_fd().as_raw_fd());
+    assert!(worker.poll().unwrap().is_none(), "stale wake, no job");
+    assert!(!readable(&worker), "stale wake consumed");
+    shutdown(&mut worker);
+}
+
+/// The result channel disconnects before the exit wake, so the first poll
+/// after the wake reports the failure instead of an empty channel.
+#[test]
+fn an_unwinding_rasterizer_is_disconnected_before_its_exit_wake() {
+    let (release, running, mut worker) = gated(|| panic!("fixture raster unwind"));
+    job_started(&mut worker, &running);
+    release.send(()).unwrap();
+    woken(&worker);
+    assert!(worker.poll().is_err(), "disconnect visible at the wake");
+    worker.request_shutdown();
+    wait(|| worker.poll_shutdown().is_err());
+}
+
+/// A startup failure is announced before the owner can poll it, and an exit
+/// with no job in flight is a failure, not idleness.
+#[test]
+fn startup_failure_and_unrequested_exit_are_announced_and_fatal() {
+    let mut failed = GpuWorker::spawn(|| Err("fixture startup failure".into())).unwrap();
+    woken(&failed);
+    assert!(failed.poll_ready().is_err());
+    shutdown(&mut failed);
+    let (release, running, mut quit) = gated(|| Err("fixture raster failure".into()));
+    job_started(&mut quit, &running);
+    release.send(()).unwrap();
+    woken(&quit);
+    assert!(quit.poll().is_err(), "failure visible at the wake");
+    shutdown(&mut quit);
+}

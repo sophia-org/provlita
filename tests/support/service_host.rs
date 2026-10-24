@@ -42,6 +42,10 @@ pub fn grant() -> ContentGrant {
 pub fn output(id: u64) -> ContentOutputId {
     ContentOutputId { id, generation: 1 }
 }
+thread_local! {
+    /// While set, the fixture renderer holds its result: a job stays in flight.
+    pub static STALL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 pub struct Raster {
     pending: Option<RenderResult>,
 }
@@ -57,6 +61,9 @@ impl RasterExecutor for Raster {
         Ok(())
     }
     fn poll(&mut self) -> Result<Option<RenderResult>, String> {
+        if STALL.get() {
+            return Ok(None);
+        }
         Ok(self.pending.take())
     }
 }
@@ -78,6 +85,11 @@ pub struct Peer {
     pub acks: Vec<ContentActionAck>,
     pub releases: Vec<(TransactionId, ContentResourceId)>,
     pub hold_releases: bool,
+    /// Record frame demands without granting their permits.
+    pub hold_permits: bool,
+    held_demands: Vec<(TransactionId, ContentFrameDemand)>,
+    /// Frame demands received.
+    pub demands: usize,
     /// Record activations without sending their Session outcome.
     pub hold_outcomes: bool,
     pub begins: usize,
@@ -113,6 +125,9 @@ fn peer(wire: Wire) -> Peer {
         acks: Vec::new(),
         releases: Vec::new(),
         hold_releases: false,
+        hold_permits: false,
+        held_demands: Vec::new(),
+        demands: 0,
         hold_outcomes: false,
         begins: 0,
         refuse: None,
@@ -261,6 +276,10 @@ pub fn pair() -> (DockService<Raster>, Peer) {
 }
 /// Both outputs and every allocation are `width` pixels wide.
 pub fn pair_with_width(width: u32) -> (DockService<Raster>, Peer) {
+    pair_with(width, None)
+}
+/// Optionally lower the negotiated aggregate pending-candidate cap.
+pub fn pair_with(width: u32, max_pending_candidates: Option<u32>) -> (DockService<Raster>, Peer) {
     let path = std::env::temp_dir().join(format!(
         "dock-service-{}-{}",
         std::process::id(),
@@ -280,14 +299,14 @@ pub fn pair_with_width(width: u32) -> (DockService<Raster>, Peer) {
     let server = std::thread::spawn(move || {
         let (stream, _) = listener.accept().unwrap();
         let mut wire = Wire::new(stream);
+        let mut limits = ContentLimits::prototype(grant());
+        if let Some(cap) = max_pending_candidates {
+            limits.max_pending_candidates_total = cap;
+        }
         wire.object(
             "limits",
             15,
-            encode_shell_file_limits(
-                object_header(ShellFileKind::Limits),
-                ContentLimits::prototype(grant()),
-            )
-            .unwrap(),
+            encode_shell_file_limits(object_header(ShellFileKind::Limits), limits).unwrap(),
         );
         wire.object("image-channel", 41, discovery_text(&endpoint_name));
         wire.object("image-limits", 42, image_limits_record());
@@ -392,19 +411,36 @@ impl Peer {
         self.wire.event(kind, &body);
     }
     /// Publish a whole catalog, identities included, as the `catalog` object.
+    /// Only the terminal pin is available, so repeated generations paint the
+    /// same dock pixels.
     pub fn catalog(&mut self, generation: u64) {
+        self.catalog_with(generation, false);
+    }
+    /// A catalog whose browser pin availability selects different dock pixels.
+    pub fn catalog_with(&mut self, generation: u64, browser: bool) {
+        let mut entries = vec![ShellApplicationDescriptor {
+            slot: 1,
+            available: true,
+            label: "Terminal".into(),
+            keywords: String::new(),
+        }];
+        let mut identities = BTreeMap::from([(1, "registered:terminal".into())]);
+        if browser {
+            entries.push(ShellApplicationDescriptor {
+                slot: 2,
+                available: true,
+                label: "Browser".into(),
+                keywords: String::new(),
+            });
+            identities.insert(2, "registered:browser".into());
+        }
         let catalog = ShellPersistentCatalog {
             catalog: ShellApplicationCatalog {
                 connection_epoch: EPOCH,
                 generation,
-                entries: vec![ShellApplicationDescriptor {
-                    slot: 1,
-                    available: true,
-                    label: "Terminal".into(),
-                    keywords: String::new(),
-                }],
+                entries,
             },
-            identities: BTreeMap::from([(1, "registered:terminal".into())]),
+            identities,
         };
         let bytes = encode_shell_file_catalog(
             object_header(ShellFileKind::Catalog),
@@ -440,6 +476,28 @@ impl Peer {
             ShellContentRecord::Action(action.clone()),
         );
         action
+    }
+    fn permit(&mut self, tx: TransactionId, demand: &ContentFrameDemand) {
+        self.send(
+            tx,
+            ShellContentRecord::FramePermit(ContentFramePermit {
+                grant: grant(),
+                output: demand.output,
+                demand_id: demand.demand_id,
+                permit_id: demand.demand_id,
+                state: 1,
+                reason: 0,
+                ttl_ms: 250,
+                max_candidate_bytes: self.permit_bytes,
+            }),
+        );
+    }
+    /// Grant every withheld permit and stop withholding.
+    pub fn release_permits(&mut self) {
+        self.hold_permits = false;
+        for (tx, demand) in std::mem::take(&mut self.held_demands) {
+            self.permit(tx, &demand);
+        }
     }
     pub fn release_all(&mut self) {
         for (tx, resource) in std::mem::take(&mut self.releases) {
@@ -854,19 +912,14 @@ impl Peer {
                     }),
                 );
             }
-            ShellContentRecord::FrameDemand(demand) => self.send(
-                tx,
-                ShellContentRecord::FramePermit(ContentFramePermit {
-                    grant: grant(),
-                    output: demand.output,
-                    demand_id: demand.demand_id,
-                    permit_id: demand.demand_id,
-                    state: 1,
-                    reason: 0,
-                    ttl_ms: 250,
-                    max_candidate_bytes: self.permit_bytes,
-                }),
-            ),
+            ShellContentRecord::FrameDemand(demand) => {
+                self.demands += 1;
+                if self.hold_permits {
+                    self.held_demands.push((tx, demand));
+                } else {
+                    self.permit(tx, &demand);
+                }
+            }
             ShellContentRecord::ResourceRetire(retire) => {
                 self.releases.push((tx, retire.resource));
                 if !self.hold_releases {
@@ -878,8 +931,11 @@ impl Peer {
         }
     }
 }
+/// Step and pump until `done`, sleeping only through the production wait:
+/// a missing wake shows up as a convergence failure, never as a spin.
 pub fn drive(service: &mut DockService<Raster>, peer: &mut Peer, done: impl Fn(&Peer) -> bool) {
     let start = Instant::now();
+    let limit = start + Duration::from_secs(2);
     loop {
         service.step().unwrap();
         peer.pump();
@@ -887,10 +943,7 @@ pub fn drive(service: &mut DockService<Raster>, peer: &mut Peer, done: impl Fn(&
             service.step().unwrap();
             return;
         }
-        assert!(
-            start.elapsed() < Duration::from_secs(2),
-            "fixture did not converge"
-        );
-        std::thread::yield_now();
+        assert!(Instant::now() < limit, "fixture did not converge");
+        service.wait(None, Some(limit)).unwrap();
     }
 }

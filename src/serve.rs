@@ -8,13 +8,18 @@ use provlita::{
     render::{GpuGrant, GpuWorker},
     service::{DockService, StopReport},
     stop::{StopRequests, StopSignal},
+    wait::Wait,
 };
 use sophia_shell_client::ShellClientOptions;
 use sophia_shell_protocol::*;
 use std::{
     io::Read,
+    os::fd::AsFd,
     time::{Duration, Instant},
 };
+
+/// Cadence of the opt-in cumulative work record.
+const WORK_STATS_PERIOD: Duration = Duration::from_secs(5);
 
 // Sophia@bc23ee5b crates/sophia-protocol/src/packets/shell_launcher.rs. The
 // standalone shell SDK requires this bit in the dock mask but does not export
@@ -104,7 +109,19 @@ pub fn run() -> Result<(), String> {
                 println!("{}", evidence.record("provlita")?);
                 return Ok::<_, String>(None);
             }
-            std::thread::sleep(Duration::from_millis(4));
+            // Admission wakes on the worker, the stop request or the session
+            // socket, bounded by the GPU startup and SDK deadlines.
+            let interest = connection.io_interest().map_err(|e| e.to_string())?;
+            if interest.immediate {
+                continue;
+            }
+            Wait::new()
+                .events(connection.as_fd(), interest.readable, interest.writable)
+                .readable(worker.wake_fd())
+                .readable(stop.wake_fd())
+                .until(connection.wake_deadline())
+                .until(worker.wake_deadline())
+                .block()?;
         }
     })();
     match startup {
@@ -122,17 +139,39 @@ pub fn run() -> Result<(), String> {
         Err(error) => return finish(worker, error),
     }
     let mut service = DockService::new(connection, config, allowance, worker, endpoint_dir)?;
+    let stats = std::env::var_os("SOPHIA_SHELL_WORK_STATS").is_some_and(|value| value == "1");
+    if stats {
+        service.enable_work_stats();
+    }
+    let mut next_stats = Instant::now() + WORK_STATS_PERIOD;
     let error = loop {
         if let Some(signal) = stop.requested() {
+            work_stats(&service, true);
             let (report, worker) = service.stop();
             return stopped(signal, "serving", "closed", report, Some(worker));
         }
-        match service.step() {
-            Ok(_) => std::thread::sleep(service.idle_wait()),
-            Err(error) => break error,
+        if let Err(error) = service.step() {
+            break error;
+        }
+        if stats && Instant::now() >= next_stats {
+            // Built at print time: a periodic record never repeats stale counters.
+            work_stats(&service, false);
+            next_stats = Instant::now() + WORK_STATS_PERIOD;
+        }
+        if let Err(error) = service.wait(Some(stop.wake_fd()), stats.then_some(next_stats)) {
+            break error;
         }
     };
+    work_stats(&service, true);
     finish(service.into_renderer(), error)
+}
+/// Print the enabled work record; a failed clock read is reported, not hidden.
+fn work_stats(service: &DockService<GpuWorker>, final_: bool) {
+    match service.work_stats_record(final_) {
+        Ok(Some(record)) => println!("{record}"),
+        Ok(None) => {}
+        Err(error) => eprintln!("provlita: work stats: {error}"),
+    }
 }
 /// Report a requested stop after any connection is closed. Success is claimed
 /// only when the GPU worker thread is joined (or never started).
@@ -170,11 +209,18 @@ fn finish(worker: GpuWorker, error: String) -> Result<(), String> {
 }
 fn join(mut worker: GpuWorker) -> Result<(), String> {
     worker.request_shutdown();
-    let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(2) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
         match worker.poll_shutdown() {
             Ok(true) => return Ok(()),
-            Ok(false) => std::thread::sleep(Duration::from_millis(4)),
+            // The exit wake is never cleared, so once it fires this loop
+            // only spins for the instant between the wake and thread exit.
+            Ok(false) => {
+                Wait::new()
+                    .readable(worker.wake_fd())
+                    .until(Some(deadline))
+                    .block()?;
+            }
             Err(join) => return Err(format!("GPU shutdown: {join}")),
         }
     }

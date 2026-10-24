@@ -46,12 +46,12 @@ fn withheld_old_release_keeps_actions_live_and_exact_release_enables_reuse() {
     drive(&mut service, &mut peer, |p| p.presented.len() == 2);
     let first_resource = peer.presented[&1].2.placements[0].resource;
     peer.hold_releases = true;
-    peer.catalog(2);
+    peer.catalog_with(2, true);
     drive(&mut service, &mut peer, |p| p.releases.len() == 2);
     assert_eq!(peer.begins, 4);
     peer.action(1, 1, 1);
     drive(&mut service, &mut peer, |p| p.actions.len() == 1);
-    peer.catalog(3);
+    peer.catalog_with(3, false);
     for _ in 0..20 {
         service.step().unwrap();
         peer.pump();
@@ -81,6 +81,101 @@ fn withheld_old_release_keeps_actions_live_and_exact_release_enables_reuse() {
             .all(|(_, b, _)| b.catalog_generation == 3)
     });
     assert_eq!(peer.begins, 6);
+}
+
+/// A catalog that changes only slot authority, not what the dock paints, is
+/// presented again from the resident pixels: fresh demand, permit and
+/// candidate on the same resource, no render, upload or retirement.
+#[test]
+fn unchanged_pixels_are_presented_again_on_the_resident_resource_without_a_render() {
+    let (mut service, mut peer) = pair();
+    service.enable_work_stats();
+    drive(&mut service, &mut peer, |p| p.presented.len() == 2);
+    let before: Vec<_> = (1..=2)
+        .map(|id| peer.presented[&id].2.placements[0].resource)
+        .collect();
+    peer.catalog(2);
+    drive(&mut service, &mut peer, |p| {
+        p.presented
+            .values()
+            .all(|(_, begin, _)| begin.catalog_generation == 2)
+    });
+    assert_eq!(peer.begins, 2, "no new ring offer");
+    assert!(peer.releases.is_empty(), "the reused slot is not retired");
+    for id in 1..=2 {
+        let (_, begin, chunk) = &peer.presented[&id];
+        assert_eq!(chunk.placements[0].resource, before[id as usize - 1]);
+        assert_eq!(begin.content.interaction_generation, 2);
+        assert_eq!(chunk.targets[0].target_generation, 2);
+    }
+    // The new presentation's targets activate under the new generation.
+    peer.action(1, 1, 1);
+    drive(&mut service, &mut peer, |p| p.actions.len() == 1);
+    assert_eq!(peer.actions[0].catalog_generation, 2);
+    let stats = service.work_stats();
+    assert_eq!(
+        (
+            stats.renders_started,
+            stats.renders_completed,
+            stats.uploads,
+            stats.upload_bytes,
+            stats.raster_reuses
+        ),
+        (2, 2, 2, 2 * 800 * 64 * 4, 2)
+    );
+    assert!(stats.service_turns > 0 && stats.waits > 0);
+    // A catalog that changes the painted tiles renders and uploads again.
+    peer.catalog_with(3, true);
+    drive(&mut service, &mut peer, |p| {
+        p.presented
+            .values()
+            .all(|(_, begin, _)| begin.catalog_generation == 3)
+    });
+    assert_eq!(peer.begins, 4);
+    assert_eq!(service.work_stats().raster_reuses, 2);
+    let record = service.work_stats_record(true).unwrap().unwrap();
+    assert!(
+        record.starts_with(
+            "sophia_shell_work_stats schema=1 client=provlita final=1 monotonic_usec="
+        ),
+        "{record}"
+    );
+    assert!(
+        record.ends_with(
+            " renders_started=4 renders_completed=4 uploads=4 upload_bytes=819200 raster_reuses=2"
+        ),
+        "{record}"
+    );
+    assert!(
+        service
+            .work_stats_record(false)
+            .unwrap()
+            .unwrap()
+            .contains(" final=0 ")
+    );
+}
+
+/// Reused pixels still count against the negotiated aggregate pending
+/// candidate cap: with one permit withheld, the second output's reuse waits.
+#[test]
+fn reuse_obeys_the_aggregate_pending_candidate_cap() {
+    let (mut service, mut peer) = pair_with(800, Some(1));
+    drive(&mut service, &mut peer, |p| p.presented.len() == 2);
+    assert_eq!(peer.demands, 2);
+    peer.hold_permits = true;
+    peer.catalog(2);
+    for _ in 0..20 {
+        service.step().unwrap();
+        peer.pump();
+    }
+    assert_eq!(peer.demands, 3, "one reuse candidate pending under the cap");
+    peer.release_permits();
+    drive(&mut service, &mut peer, |p| {
+        p.presented
+            .values()
+            .all(|(_, begin, _)| begin.catalog_generation == 2)
+    });
+    assert_eq!((peer.demands, peer.begins), (4, 2));
 }
 
 #[test]

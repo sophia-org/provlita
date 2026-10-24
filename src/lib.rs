@@ -5,3 +5,4 @@ pub mod service;
 pub mod stop;
 pub mod ui;
 pub mod views;
+pub mod wait;

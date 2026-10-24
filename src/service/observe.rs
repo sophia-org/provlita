@@ -211,7 +211,11 @@ impl<R: RasterExecutor> DockService<R> {
                     1 => {}
                     2 => {
                         let pending = output.pending.take().unwrap();
-                        if let Some(old) = output.current {
+                        // A reused resident slot stays current; only a
+                        // superseded other slot retires.
+                        if let Some(old) = output.current
+                            && old != pending.slot
+                        {
                             output.slots[old].state = ResourceState::RetireNeeded;
                         }
                         output.current = Some(pending.slot);

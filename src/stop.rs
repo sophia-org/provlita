@@ -2,13 +2,23 @@
 //! poll it at their bounded turn boundaries. A PID-namespace init (bwrap
 //! `--as-pid-1`) receives SIGTERM or SIGINT from ancestor namespaces only once a
 //! handler exists, so serving installs these before any startup work.
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::{
+    os::fd::{BorrowedFd, IntoRawFd},
+    sync::atomic::{AtomicI32, Ordering},
+};
 
 static REQUESTED: AtomicI32 = AtomicI32::new(0);
+/// Process-lifetime event counter that owner waits include; never cleared, so
+/// every wait after a stop request returns at once.
+static WAKE: AtomicI32 = AtomicI32::new(-1);
 
 extern "C" fn record(signal: libc::c_int) {
-    // Async-signal-safe: one atomic store, first request wins.
+    // Async-signal-safe: one atomic store, first request wins, then one write.
     let _ = REQUESTED.compare_exchange(0, signal, Ordering::SeqCst, Ordering::SeqCst);
+    let wake = WAKE.load(Ordering::SeqCst);
+    if wake >= 0 {
+        crate::wait::signal(wake);
+    }
 }
 
 /// The signal that requested this process stop.
@@ -37,6 +47,16 @@ impl StopRequests {
     /// Install both handlers and unblock both signals on the calling thread.
     /// Call on the main thread before spawning others so they inherit the mask.
     pub fn install() -> Result<Self, String> {
+        if WAKE.load(Ordering::SeqCst) < 0 {
+            let fd = crate::wait::eventfd()?.into_raw_fd();
+            if WAKE
+                .compare_exchange(-1, fd, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
+                // SAFETY: `fd` was just created here and is owned by nothing else.
+                unsafe { libc::close(fd) };
+            }
+        }
         // SAFETY: the handler performs one atomic operation. The sigaction and
         // sigset values are fully initialized before the kernel reads them.
         unsafe {
@@ -66,6 +86,11 @@ impl StopRequests {
             }
         }
         Ok(Self(()))
+    }
+    /// Readable once a stop was requested; include it in every owner wait.
+    pub fn wake_fd(&self) -> BorrowedFd<'_> {
+        // SAFETY: install stored a process-lifetime descriptor that is never closed.
+        unsafe { BorrowedFd::borrow_raw(WAKE.load(Ordering::SeqCst)) }
     }
     /// The first recorded stop request, if any.
     pub fn requested(&self) -> Option<StopSignal> {
