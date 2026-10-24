@@ -99,6 +99,8 @@ pub struct Peer {
     pub permit_bytes: u32,
     /// The pixel width every granted allocation gets.
     pub width: u32,
+    /// Output height; allocations sit `64` above its bottom edge.
+    pub height: u32,
 }
 fn object_header(kind: ShellFileKind) -> ShellFileHeader {
     ShellFileHeader {
@@ -133,6 +135,7 @@ fn peer(wire: Wire) -> Peer {
         refuse: None,
         permit_bytes: 8192,
         width: 800,
+        height: 600,
     }
 }
 /// Bind a SEQPACKET listener for the owned-ring image endpoint.
@@ -211,12 +214,15 @@ fn recv_packet(fd: std::os::fd::RawFd) -> Option<(Vec<u8>, Vec<std::os::fd::Owne
     Some((buf[..n as usize].to_vec(), fds))
 }
 
-fn discovery_text(endpoint: &str) -> Vec<u8> {
+/// `dma`: the owner also advertises DMA-BUF (source kinds 6, one capture
+/// job per offer, one opaque XRGB row), as a Session built with shell
+/// capture does; the ring-only client is still granted the ring alone.
+fn discovery_text(endpoint: &str, dma: bool) -> Vec<u8> {
     ShellImageDiscovery {
         connection_epoch: EPOCH,
         channel_generation: 3,
         endpoint: endpoint.to_owned(),
-        source_kinds: 4,
+        source_kinds: if dma { 6 } else { 4 },
         max_offers: 4,
         max_packets_per_turn: 1,
         hello_timeout_ms: 250,
@@ -231,18 +237,18 @@ fn discovery_text(endpoint: &str) -> Vec<u8> {
     .into_bytes()
 }
 
-fn image_limits_record() -> Vec<u8> {
+fn image_limits_record(dma: bool) -> Vec<u8> {
     let body = ShellImageLimits {
         channel_generation: 3,
         limits_generation: 9,
         max_resource_bytes: 4_194_304,
         max_sealed_backing_bytes: 16_777_216,
-        max_dma_source_bytes: 0,
-        max_renderer_allocation_bytes: 0,
-        max_renderer_entries: 0,
+        max_dma_source_bytes: if dma { 4 * 4_194_304 } else { 0 },
+        max_renderer_allocation_bytes: if dma { 4 * 4_194_304 } else { 0 },
+        max_renderer_entries: if dma { 4 } else { 0 },
         max_offers: 4,
         max_validation_jobs: 4,
-        max_capture_jobs: 0,
+        max_capture_jobs: if dma { 4 } else { 0 },
         max_admitted_outputs: 16,
         max_format_rows_per_output: 1,
         max_width: 8192,
@@ -258,12 +264,24 @@ fn image_limits_record() -> Vec<u8> {
         .unwrap()
 }
 
-fn image_formats_record() -> Vec<u8> {
+fn image_formats_record(dma: bool) -> Vec<u8> {
     let body = ShellImageFormats {
         channel_generation: 3,
         formats_generation: 11,
         limits_generation: 9,
-        rows: Vec::new(),
+        rows: dma
+            .then_some(ShellImageFormatRow {
+                output: 1,
+                device_major: 226,
+                device_minor: 128,
+                fourcc: 0x3432_5258, // DRM_FORMAT_XRGB8888
+                flags: SHELL_IMAGE_FORMAT_FLAG_OPAQUE,
+                modifier: 0,
+                max_width: 8192,
+                max_height: 4096,
+            })
+            .into_iter()
+            .collect(),
     }
     .encode()
     .unwrap();
@@ -280,6 +298,36 @@ pub fn pair_with_width(width: u32) -> (DockService<Raster>, Peer) {
 }
 /// Optionally lower the negotiated aggregate pending-candidate cap.
 pub fn pair_with(width: u32, max_pending_candidates: Option<u32>) -> (DockService<Raster>, Peer) {
+    pair_custom(width, 600, max_pending_candidates, true)
+}
+/// `height` sizes both outputs; `initial_catalog` publishes the terminal-pin
+/// catalog before the service starts, as every other pairing does.
+pub fn pair_custom(
+    width: u32,
+    height: u32,
+    max_pending_candidates: Option<u32>,
+    initial_catalog: bool,
+) -> (DockService<Raster>, Peer) {
+    pair_inner(
+        width,
+        height,
+        max_pending_candidates,
+        initial_catalog,
+        false,
+    )
+}
+/// No initial catalog; the owner advertises owned ring plus DMA-BUF.
+#[allow(dead_code)] // This shared fixture is also compiled by ring-only tests.
+pub fn pair_mixed_discovery(width: u32, height: u32) -> (DockService<Raster>, Peer) {
+    pair_inner(width, height, None, false, true)
+}
+fn pair_inner(
+    width: u32,
+    height: u32,
+    max_pending_candidates: Option<u32>,
+    initial_catalog: bool,
+    dma: bool,
+) -> (DockService<Raster>, Peer) {
     let path = std::env::temp_dir().join(format!(
         "dock-service-{}-{}",
         std::process::id(),
@@ -308,9 +356,9 @@ pub fn pair_with(width: u32, max_pending_candidates: Option<u32>) -> (DockServic
             15,
             encode_shell_file_limits(object_header(ShellFileKind::Limits), limits).unwrap(),
         );
-        wire.object("image-channel", 41, discovery_text(&endpoint_name));
-        wire.object("image-limits", 42, image_limits_record());
-        wire.object("image-formats", 43, image_formats_record());
+        wire.object("image-channel", 41, discovery_text(&endpoint_name, dma));
+        wire.object("image-limits", 42, image_limits_record(dma));
+        wire.object("image-formats", 43, image_formats_record(dma));
         let mut peer = peer(wire);
         let deadline = Instant::now() + Duration::from_secs(5);
         while !done.load(Ordering::Acquire) {
@@ -334,6 +382,7 @@ pub fn pair_with(width: u32, max_pending_candidates: Option<u32>) -> (DockServic
     let mut peer = server.join().unwrap();
     peer.image_listener = Some(image_listener);
     peer.width = width;
+    peer.height = height;
     std::fs::remove_file(path).unwrap();
     peer.send(
         TransactionId::from_raw(900),
@@ -344,7 +393,7 @@ pub fn pair_with(width: u32, max_pending_candidates: Option<u32>) -> (DockServic
                 .map(|id| ContentOutputFactsEntry {
                     output: output(id),
                     local_width: width,
-                    local_height: 600,
+                    local_height: height,
                     scale_numerator: 1,
                     scale_denominator: 1,
                     scale_generation: 1,
@@ -352,7 +401,9 @@ pub fn pair_with(width: u32, max_pending_candidates: Option<u32>) -> (DockServic
                 .collect(),
         }),
     );
-    peer.catalog(1);
+    if initial_catalog {
+        peer.catalog(1);
+    }
     let config = Config::parse(include_str!("../../examples/minimal/config.kdl")).unwrap();
     (
         DockService::new(
@@ -434,6 +485,15 @@ impl Peer {
             });
             identities.insert(2, "registered:browser".into());
         }
+        self.catalog_entries(generation, entries, identities);
+    }
+    /// Publish exactly these entries and identities as the `catalog` object.
+    pub fn catalog_entries(
+        &mut self,
+        generation: u64,
+        entries: Vec<ShellApplicationDescriptor>,
+        identities: BTreeMap<u16, String>,
+    ) {
         let catalog = ShellPersistentCatalog {
             catalog: ShellApplicationCatalog {
                 connection_epoch: EPOCH,
@@ -894,13 +954,13 @@ impl Peer {
                         scale_generation: 1,
                         logical: ContentLogicalRect {
                             x: 0,
-                            y: 536,
+                            y: (self.height - 64) as i32,
                             width: self.width,
                             height: 64,
                         },
                         pixel: ContentPixelRect {
                             x: 0,
-                            y: 536,
+                            y: (self.height - 64) as i32,
                             width: self.width,
                             height: 64,
                         },
